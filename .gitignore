@@ -1,0 +1,8 @@
+# Generated data and its sealed answer key: regenerate, never commit.
+synth/
+synth*/
+*.duckdb
+*.duckdb.wal
+
+.venv/
+__pycache__/
