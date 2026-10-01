@@ -139,7 +139,9 @@ re-runs every time you use it.
 
 ## Challenge 1: build a product mapping table
 
-**The goal.** Figure out which item IDs in the data represent the three blood products you care about: platelets, packed red blood cells, and plasma. Every later query filters on this table, so if it's wrong, everything downstream is wrong.
+**The goal.** Find **every** item ID in `inputevents` that records one of three blood products: platelets, packed red blood cells, or plasma. A product can be charted under more than one item ID, so expect more rows than products; you need all of them, not one per product. Save the result as a table or view named `product_map`.
+
+Every later query filters `inputevents` through this table. A missing item means that product is undercounted everywhere downstream; an extra item means counting something that isn't one of the three.
 
 **Where to look.** `d_items` is the dictionary of every item that can be charted, with labels, categories, units, and which table each item's records live in. `inputevents` is where the actual transfusions are recorded.
 
@@ -148,9 +150,9 @@ re-runs every time you use it.
 | Column | What goes in it |
 |---|---|
 | `itemid` | The item's ID |
-| `product` | `platelets`, `rbc`, or `plasma` |
-| `amountuom` | The unit its amounts are recorded in |
-| `note` | One line on why you included it |
+| `product` | Exactly `platelets`, `rbc`, or `plasma` |
+| `amountuom` | The unit its amounts are recorded in, as `inputevents` records it |
+| `note` | One line of data evidence for including it, e.g. what the label, `linksto` or units showed. No medical knowledge needed. |
 
 You can build it as a view from a query, or as a hand-written `VALUES` table if you decide membership by inspection. Either is fine, as long as the reasoning is in the note.
 
