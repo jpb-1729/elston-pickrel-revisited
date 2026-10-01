@@ -81,6 +81,19 @@ The `inputevents` columns you'll use most:
 | `orderid` | identifies the record |
 | `linkorderid` | links records that belong to the same order over time; for the first record of an order it equals `orderid` |
 
+**`orderid` and `linkorderid` in plain words.** Think of each row as a nurse's
+note: "from this time to that time, this patient got this much of this." Each
+note gets its own ID, `orderid`. One order often takes several notes: a nurse
+starts a bag (note 1), pauses it while the patient goes for a scan, then
+restarts the same bag (note 2). Every note of the same order carries the
+*first* note's ID in `linkorderid`:
+
+| orderid | linkorderid | what happened |
+|---|---|---|
+| 501 | 501 | order started: first note, so the two IDs are equal |
+| 502 | 501 | same order restarted after a pause: new note, same `linkorderid` |
+| 777 | 777 | a different order |
+
 ## DuckDB and SQL starter kit
 
 Commands inside `duckdb` (they start with a dot and need no semicolon):
@@ -210,6 +223,46 @@ collapsing them into one row the way `group by` does.
 
 Within each `admission_type`, the shares add up to 1.
 
+**14. Turn events into things: clean, then group.** Lots of data records
+*events* (clicks, notes, shipments), while the questions are about *things*
+(visits, orders). A shared ID ties a thing's events together. Step one keeps
+only the events that count; step two groups by the shared ID to get one row
+per thing. This runs on made-up website clicks, not the database:
+
+    with clicks as (
+        select * from (values
+            (1, 'A', 'ok',  timestamp '2150-01-01 09:00', 1),
+            (2, 'A', 'ok',  timestamp '2150-01-01 09:05', 2),
+            (2, 'A', 'ok',  timestamp '2150-01-01 09:05', 2),   -- the same click logged twice
+            (3, 'B', 'bot', timestamp '2150-01-01 10:00', 1),   -- not a real click
+            (4, 'B', 'ok',  timestamp '2150-01-01 10:02', 1)
+        ) as t(click_id, session_id, flag, clicked_at, pages)
+    ),
+    real_clicks as (                        -- step 1: keep the events that count
+        select distinct * from clicks where flag <> 'bot'
+    )
+    select session_id,                      -- step 2: one row per thing
+           min(clicked_at) as first_click,
+           max(clicked_at) as last_click,
+           count(*)        as n_clicks,
+           sum(pages)      as pages
+    from real_clicks
+    group by session_id
+    order by session_id;
+
+It returns:
+
+| session_id | first_click | last_click | n_clicks | pages |
+|---|---|---|---|---|
+| A | 2150-01-01 09:00:00 | 2150-01-01 09:05:00 | 2 | 3 |
+| B | 2150-01-01 10:02:00 | 2150-01-01 10:02:00 | 1 | 1 |
+
+Try breaking it. Remove `distinct`, and session A gets 3 clicks and 5 pages.
+Put it back and remove the `where`, and session B starts at 10:00, the bot's
+time, with 2 clicks. Both times there are still 2 rows. Junk events don't add new things; they hide inside things that already
+exist. That's why you clean *before* you group: once rows are added together,
+you can't take one back out.
+
 ## Challenge 1: build a product mapping table
 
 **The goal.** Find **every** item ID in `inputevents` that records one of three blood products: platelets, packed red blood cells, or plasma. A product can be charted under more than one item ID, so expect more rows than products; you need all of them, not one per product. Save the result as a table or view named `product_map`.
@@ -282,6 +335,11 @@ Questions to answer in order. Each has hints in `HINTS.md`.
 - A record that was **replaced by a corrected record** doesn't count; the correction does.
 - **Two identical records** are one record charted twice; count it once.
 - A bag counts once whatever **unit** its amount is recorded in.
+
+**The idea.** This is pattern 14 on real data. Records are the events and bags
+are the things. Most of the work is step 1, deciding which records count;
+step 2, grouping, is a few lines. Run pattern 14 and break it the way it
+suggests before you start: every mistake it shows can happen here too.
 
 **Where to look.** `inputevents`, and your `product_map` from Challenge 1. Choose items by joining to `product_map`; don't type the item IDs again.
 
@@ -373,24 +431,49 @@ the right number of bags with wrong start times or wrong amounts.
 
 ### Working through it
 
+`sql/challenge2.sql` is a worksheet with one section per step. Write each
+step's queries in its section, and answer its question in a comment before
+moving on. Steps 1 to 5 are exploring: they build nothing, but each one
+decides a line of the final query. **On track** says what you should see if
+your query is right. It describes the data's shape, not the answer.
+
 1. **Narrow down.** Keep only records of your three products by joining
    `inputevents` to `product_map`. How many records are there per product?
    *(patterns 5, 7)*
+   **On track:** three rows, one per product, each with thousands of records.
+   That's more records than there are bags.
 2. **Statuses.** What values does `statusdescription` take, and how many
    records have each? Look at a few raw records for each value. For each one,
    decide: is it a whole bag, part of a bag, or not a bag at all? *(patterns 3, 5)*
+   **On track:** four values. For each one you can write a sentence saying
+   which rule under "What counts as a bag" it falls under.
 3. **Repeats.** Are some records exact copies of each other? How many?
    *(pattern 10)*
+   **On track:** `count(*)` and the count of `select distinct *` differ. Notice
+   that copies share an `orderid` too, so `orderid` isn't one per row after all.
 4. **Bag IDs.** Which column ties together the records of one bag? Find bags
    with more than one record and look at all their records side by side.
    *(patterns 3, 5)*
+   **On track:** most bags have one record and some have several. Ordered by
+   `starttime`, a bag's records read like a story: started, paused, resumed,
+   finished or stopped. Its first record's `orderid` equals the shared ID.
 5. **Units.** For the item recorded in units, what does one record's `amount`
    count? Does that change how many bags one record is? *(pattern 6)*
+   **On track:** in the records you've decided to count, its amounts are
+   small whole numbers, nothing like the hundreds of millilitres of the other
+   items.
 6. **Build `bags`** in two steps with `with`: first the records you count,
-   then one row per bag. *(patterns 5, 6, 11)*
+   then one row per bag. *(patterns 5, 6, 11, 14)*
+   **On track:** build and check the first step on its own before writing the
+   second. Run `select statusdescription, count(*) ... group by all` on it:
+   only statuses you decided to keep should be there. Compare `count(*)` with
+   the count of `select distinct *` on it: they should be equal.
 7. **Check it before you grade.** Does any `bag_id` appear twice? Compare
    `count(*)` with `count(distinct bag_id)`. Does every bag's `n_records` and
    `amount` look sensible for its item?
+   **On track:** the two counts are equal; `n_records` is at least 1 and
+   rarely more than a handful; and no bag's `amount` is more than its bag size
+   (`totalamount`).
 
 ## Challenge 3: bags per stay
 

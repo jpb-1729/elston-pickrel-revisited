@@ -316,6 +316,15 @@ The shape, with the parts that matter left for you:
 
 </details>
 
+<details><summary>Hint 3</summary>
+
+Write `counted` first, on its own, ending the query with
+`select * from counted limit 20;`. Only when it holds exactly the records you
+want, swap that last line for the grouping. Pattern 14 has the same two steps
+on made-up data; compare yours with it line by line.
+
+</details>
+
 ### Step 7: check before grading
 
 <details><summary>Hint 1</summary>
