@@ -68,6 +68,19 @@ Things worth knowing:
 - **Column meanings** follow MIMIC-IV. When a column name puzzles you, look it
   up in the MIMIC-IV documentation at <https://mimic.mit.edu>.
 
+The `inputevents` columns you'll use most:
+
+| Column | Meaning |
+|---|---|
+| `stay_id` | the ICU stay the record belongs to |
+| `itemid` | what was given (look it up in `d_items`, or your `product_map`) |
+| `starttime`, `endtime` | when this record's infusion started and ended |
+| `amount`, `amountuom` | how much was given during this record, and in what unit |
+| `totalamount` | the size of the whole bag or order |
+| `statusdescription` | the state of the infusion when the record was charted |
+| `orderid` | identifies the record |
+| `linkorderid` | links records that belong to the same order over time; for the first record of an order it equals `orderid` |
+
 ## DuckDB and SQL starter kit
 
 Commands inside `duckdb` (they start with a dot and need no semicolon):
@@ -137,6 +150,29 @@ You can combine 5 and 6: group by one column and summarise another.
 Swap `table` for `view` to save the query instead of its result: a view
 re-runs every time you use it.
 
+**10. Distinct values and distinct rows.** `distinct` removes repeats.
+
+    select count(*) as stays, count(distinct first_careunit) as units from icustays;
+    select distinct admission_type from admissions;
+    select count(*) from (select distinct * from icustays);   -- rows that differ in at least one column
+
+**11. Build a query in steps** with `with` (a *common table expression*, or
+CTE). Each step is a named query the next step can use, which is easier to
+read and check than one big query.
+
+    with elective as (
+        select hadm_id from admissions where admission_type = 'ELECTIVE'
+    ),
+    elective_stays as (
+        select s.* from icustays s join elective e on e.hadm_id = s.hadm_id
+    )
+    select first_careunit, count(*) as stays
+    from elective_stays
+    group by first_careunit;
+
+Check each step on its own as you go: temporarily end the query with
+`select * from elective limit 10;` instead.
+
 ## Challenge 1: build a product mapping table
 
 **The goal.** Find **every** item ID in `inputevents` that records one of three blood products: platelets, packed red blood cells, or plasma. A product can be charted under more than one item ID, so expect more rows than products; you need all of them, not one per product. Save the result as a table or view named `product_map`.
@@ -198,9 +234,130 @@ Questions to answer in order. Each has hints in `HINTS.md`.
    `inputevents`? Is every blood-product item in `inputevents` either in your
    table or deliberately left out, with a reason?
 
+## Challenge 2: turn records into bags
+
+**The goal.** Build a view named `bags` with exactly **one row per physical bag** of platelets, red blood cells or plasma given in the ICU. `inputevents` has one row per *record*, and records are not bags: some bags are charted across several records, and some records shouldn't be counted at all. Every demand number later in the exercise is a count of rows in `bags`, so this is where counting goes right or wrong.
+
+**What counts as a bag.** A bag is one unit of product that was hung and started for a patient.
+
+- A bag counts **once**, however many records it was charted in.
+- A bag counts even if it **wasn't finished**.
+- A record that was **replaced by a corrected record** doesn't count; the correction does.
+- **Two identical records** are one record charted twice; count it once.
+- A bag counts once whatever **unit** its amount is recorded in.
+
+**Where to look.** `inputevents`, and your `product_map` from Challenge 1. Choose items by joining to `product_map`; don't type the item IDs again.
+
+**What to produce.** A view named `bags`, one row per bag:
+
+| Column | What goes in it |
+|---|---|
+| `bag_id` | A value that is the same for every record of the same bag and different between bags. The data already has one. |
+| `stay_id` | The ICU stay |
+| `product` | `platelets`, `rbc` or `plasma`, from `product_map` |
+| `itemid` | The item the bag was charted under |
+| `starttime` | When the bag started: the earliest `starttime` among the records you counted for it |
+| `endtime` | When it ended: the latest `endtime` among those records |
+| `n_records` | How many records you counted for the bag |
+| `amount` | The total amount given from the bag: the sum of `amount` over those records |
+| `amountuom` | The unit of `amount` |
+
+**What makes it tricky.** Several different recording habits sit between records and bags, and each matches one of the rules above. You'll find each by profiling a column, not by reading labels. Dropping records you should keep is as wrong as keeping records you should drop. `HINTS.md` names the habits one at a time if you get stuck.
+
+**How you'll know it's right.** The answer key's `bags.csv.gz` has one row per true bag, with its `stay_id`, `itemid`, `product` and `shifted_start`, which is the bag's start time as it appears in your data. Run these from the project root, in the session where `bags` exists. Like Challenge 1, they rename the key's `ffp` to `plasma` and skip the key's bags of other products.
+
+Bags per product. Your counts should equal the key's:
+
+    with key as (
+        select replace(product, 'ffp', 'plasma') as product
+        from read_csv('synth/answer_key/bags.csv.gz')
+        where product in ('platelets', 'rbc', 'ffp')
+    )
+    select k.product, k.key_bags, m.your_bags
+    from (select product, count(*) as key_bags from key group by product) k
+    left join (select product, count(*) as your_bags from bags group by product) m
+        on m.product = k.product
+    order by k.product;
+
+Bag by bag. Matches each of your bags to a true bag by stay, item and start
+time, and lists the first 50 that don't match. No rows means every bag is right:
+
+    with key as (
+        select stay_id, itemid, shifted_start as starttime
+        from read_csv('synth/answer_key/bags.csv.gz')
+        where product in ('platelets', 'rbc', 'ffp')
+    ),
+    mine as (
+        select stay_id, itemid, starttime from bags
+    )
+    select 'missing' as problem, * from (select * from key except all select * from mine)
+    union all
+    select 'extra', * from (select * from mine except all select * from key)
+    order by stay_id, starttime
+    limit 50;
+
+A *missing* bag is in the key but not in your view: you dropped records you
+needed, or gave a bag the wrong start time. An *extra* bag is in your view but
+not in the key: you counted something that isn't a bag, or counted a bag twice.
+
+Records and amounts. For bags that match, checks `n_records` and `amount`
+against the true records of each bag (amounts rounded to 1 decimal). This
+catches records counted that shouldn't be, even when the bag count is right.
+No rows means every matched bag is right:
+
+    with key_records as (
+        select k.bag_id, e.orderid, any_value(e.amount) as amount
+        from read_csv('synth/answer_key/row_key.csv.gz') k
+        join inputevents e on e.orderid = k.orderid
+        where k.is_valid
+        group by k.bag_id, e.orderid
+    ),
+    key_bags as (
+        select b.stay_id, b.itemid, b.shifted_start as starttime,
+               count(*) as n_records, round(sum(r.amount), 1) as amount
+        from key_records r
+        join read_csv('synth/answer_key/bags.csv.gz') b on b.bag_id = r.bag_id
+        where b.product in ('platelets', 'rbc', 'ffp')
+        group by all
+    )
+    select k.stay_id, k.itemid, k.starttime,
+           k.n_records as key_records, m.n_records as your_records,
+           k.amount as key_amount, round(m.amount, 1) as your_amount
+    from key_bags k
+    join bags m
+        on m.stay_id = k.stay_id and m.itemid = k.itemid and m.starttime = k.starttime
+    where k.n_records <> m.n_records or k.amount <> round(m.amount, 1)
+    order by k.stay_id, k.starttime
+    limit 50;
+
+**You're done when all three pass:** the counts match *and* the last two
+queries return no rows. Matching counts alone isn't enough: a view can have
+the right number of bags with wrong start times or wrong amounts.
+
+### Working through it
+
+1. **Narrow down.** Keep only records of your three products by joining
+   `inputevents` to `product_map`. How many records are there per product?
+   *(patterns 5, 7)*
+2. **Statuses.** What values does `statusdescription` take, and how many
+   records have each? Look at a few raw records for each value. For each one,
+   decide: is it a whole bag, part of a bag, or not a bag at all? *(patterns 3, 5)*
+3. **Repeats.** Are some records exact copies of each other? How many?
+   *(pattern 10)*
+4. **Bag IDs.** Which column ties together the records of one bag? Find bags
+   with more than one record and look at all their records side by side.
+   *(patterns 3, 5)*
+5. **Units.** For the item recorded in units, what does one record's `amount`
+   count? Does that change how many bags one record is? *(pattern 6)*
+6. **Build `bags`** in two steps with `with`: first the records you count,
+   then one row per bag. *(patterns 5, 6, 11)*
+7. **Check it before you grade.** Does any `bag_id` appear twice? Compare
+   `count(*)` with `count(distinct bag_id)`. Does every bag's `n_records` and
+   `amount` look sensible for its item?
+
 ## Not yet written
 
 These are referenced in the generator but not defined here yet:
 
-- **Challenges 2-3:** bag counts per stay and product (graded against `bags.csv.gz`).
+- **Challenge 3:** more counting graded against `bags.csv.gz`.
 - **Phase 2:** fitting demand models (graded against `effective_targets.json`).

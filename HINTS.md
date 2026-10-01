@@ -155,3 +155,194 @@ Now the other direction: list the items in `inputevents` that are *not* in
 out?
 
 </details>
+
+---
+
+## Challenge 2
+
+**A rule for any query with `group by`:** every column in the `select` must
+either be inside an aggregate (`count`, `min`, `max`, `sum`, ...) or be listed
+in the `group by`. DuckDB's `group by all` lists them for you.
+
+### Step 1: narrow down
+
+<details><summary>Hint 1</summary>
+
+Join `inputevents` to `product_map` on `itemid`; the join itself throws away
+every other item. Then count per `product`.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+    select m.product, count(*) as n_records
+    from inputevents e
+    join product_map m on m.itemid = e.itemid
+    group by m.product;
+
+</details>
+
+### Step 2: statuses
+
+<details><summary>Hint 1</summary>
+
+Add `e.statusdescription` to your step-1 query, in the `select` and the
+`group by`.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+For each status, look at ten raw records: `where statusdescription = '...'`.
+Compare `amount` with `totalamount`. Then pick one record and look at every
+record with the same `linkorderid`.
+
+</details>
+
+<details><summary>Hint 3</summary>
+
+What the statuses mean, in MIMIC's terms:
+
+- **FinishedRunning:** the infusion ran to completion.
+- **Stopped:** the infusion was stopped before the bag was empty.
+- **Paused:** the infusion was paused; the rest of the bag shows up in a later record.
+- **Rewritten:** a nurse corrected this record; the corrected version is a separate record.
+
+Match each one to a rule under "What counts as a bag".
+
+</details>
+
+### Step 3: repeats
+
+<details><summary>Hint 1</summary>
+
+Pattern 10: compare `count(*)` with the count of `select distinct *`. If they
+differ, some records are exact copies.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+To see the copies themselves:
+
+    select e.*, count(*) as copies
+    from inputevents e
+    group by all
+    having count(*) > 1
+    limit 10;
+
+`having` filters groups, the way `where` filters rows.
+
+</details>
+
+<details><summary>Hint 3</summary>
+
+`select distinct * from ...` inside a `with` step gives you the records with
+the copies removed. Do it before you count or sum anything.
+
+</details>
+
+### Step 4: bag IDs
+
+<details><summary>Hint 1</summary>
+
+Reread the `linkorderid` row of the column table in the field guide.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+Find IDs shared by several records with `group by ... having count(*) > 1`.
+Then list every record for one of them, `order by starttime`, and read the
+statuses and times in order.
+
+</details>
+
+<details><summary>Hint 3</summary>
+
+All the records of one bag share a `linkorderid`. Once you've removed the
+records that don't count, grouping by it gives one row per bag.
+
+</details>
+
+### Step 5: units
+
+<details><summary>Hint 1</summary>
+
+For that item, look at `min`, `max` and the distinct values of `amount`.
+Do they look like millilitres?
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+They're the number of donor units pooled into the bag, not a number of bags.
+One record of that item is still one bag. Its `amount` stays in `units`; don't
+mix it with millilitres.
+
+</details>
+
+### Step 6: build `bags`
+
+<details><summary>Hint 1</summary>
+
+Step one of the `with` keeps only records that count: the right items, no
+copies, nothing that was replaced. Step two groups those records by bag and
+uses `min`, `max`, `count` and `sum` for the time and amount columns.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+The shape, with the parts that matter left for you:
+
+    create or replace view bags as
+    with counted as (
+        select ...
+        from inputevents e
+        join product_map m on m.itemid = e.itemid
+        where ...
+    )
+    select
+        ... as bag_id,
+        stay_id, product, itemid,
+        min(starttime) as starttime,
+        max(endtime)   as endtime,
+        count(*)       as n_records,
+        sum(amount)    as amount,
+        amountuom
+    from counted
+    group by all;
+
+</details>
+
+### Step 7: check before grading
+
+<details><summary>Hint 1</summary>
+
+    select count(*) as bags, count(distinct bag_id) as distinct_bags from bags;
+
+The two numbers must be equal.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+Count bags per `itemid` and `n_records`. How many records does a bag usually
+take? Is any combination surprising?
+
+</details>
+
+### Reading the grading output
+
+<details><summary>Hint</summary>
+
+- **A missing and an extra bag in the same stay and item, a few minutes
+  apart:** you have the bag, but with the wrong start time. You probably
+  dropped its first record.
+- **Missing bags with no extra bag nearby:** you dropped records that are
+  real bags.
+- **Extra bags with no missing bag nearby:** you counted records that aren't
+  bags, or counted copies.
+
+</details>
