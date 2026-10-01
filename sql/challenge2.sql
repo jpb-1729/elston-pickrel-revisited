@@ -5,9 +5,10 @@
 -- Run the whole file:  .read sql/challenge2.sql
 -- Run one query:       paste it at the duckdb prompt
 --
--- Needs product_map from Challenge 1. Check with .tables; if it's missing,
--- run .read sql/challenge1.sql first. Creating views (product_map in
--- Challenge 1, bags in step 6) needs a session opened without -readonly.
+-- The line below loads product_map (and any other shared views) from
+-- sql/views.sql. Once bags passes grading, move it into views.sql too.
+-- Creating views needs a session opened without -readonly.
+.read sql/views.sql
 
 
 -- Step 1: narrow down ------------------------------------------------------

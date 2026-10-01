@@ -30,6 +30,10 @@ commit them. For example, `sql/challenge1.sql`, run with either of:
 To make a table you've built (like the mapping table) stick around, open the
 database without `-readonly` for that session.
 
+Views that later challenges build on live in `sql/views.sql`. Start each
+challenge file, or session, with `.read sql/views.sql` to load them, and
+add each challenge's view there once it passes grading.
+
 ## The database: a field guide
 
 The first question to ask about any table is **what one row means**, its
