@@ -1,10 +1,21 @@
-CREATE OR REPLACE VIEW my_view AS
+CREATE OR REPLACE VIEW product_map AS
 SELECT
-    itemid,
-    label AS product,
-    unitname AS amountuom
-FROM d_items
-WHERE label IN ('Platelets', 'Packed Red Blood Cells', 'Fresh Frozen Plasma');
+    m.itemid,
+    m.product,
+    e.amountuom,
+    m.note
+FROM (VALUES
+    (990101, 'platelets', 'Platelet product recorded in inputevents.'),
+    (990102, 'platelets', 'Pooled platelet product recorded in units.'),
+    (990103, 'platelets', 'Apheresis platelet product; included with platelets.'),
+    (990111, 'rbc', 'Packed red blood cell product recorded in inputevents.'),
+    (990121, 'plasma', 'Fresh frozen plasma product recorded in inputevents.')
+) AS m(itemid, product, note)
+JOIN (
+    SELECT DISTINCT itemid, amountuom
+    FROM inputevents
+) AS e ON e.itemid = m.itemid;
 
 SELECT *
-FROM my_view;
+FROM product_map
+ORDER BY itemid;
