@@ -21,30 +21,32 @@
 .print '=== Step 1: count what is there ==='
 .print '-- First 10 rows: bags per (stay, product)'
 -- Look at the first 10 rows: bags per (stay, product), one row per pair.
-SELECT
+select
     b.stay_id,
     b.product,
-    COUNT(b.bag_id) as num_bags
-FROM bags as b
-GROUP BY b.stay_id, b.product
-LIMIT 10;
+    count(b.bag_id) as num_bags
+from bags as b
+group by b.stay_id, b.product
+limit 10;
 
 .print '-- Stays with at least one platelet bag'
 -- Same counts as a CTE, then count the platelet rows.
 -- Only stays with at least one bag appear here; stays with none are missing.
-WITH stays AS (
-    SELECT
+with stays as (
+    select
         b.stay_id,
         b.product,
-        COUNT(b.bag_id) as num_bags
-    FROM bags as b
-    GROUP BY b.stay_id, b.product
+        count(b.bag_id) as num_bags
+    from bags as b
+    group by b.stay_id, b.product
 )
-SELECT
-    COUNT(*)  -- one row per stay, so this counts stays
-FROM stays as s
-WHERE s.product = 'platelets'
- AND s.num_bags >= 1;  -- always true here (no zero-bag rows); harmless
+
+select count(*)
+-- one row per stay, so this counts stays
+from stays as s
+where
+    s.product = 'platelets'
+    and s.num_bags >= 1;  -- always true here (no zero-bag rows); harmless
 
 
 -- Step 2: the full list ------------------------------------------------------
@@ -58,34 +60,34 @@ WHERE s.product = 'platelets'
 .print '=== Step 2: the full list ==='
 .print '-- Number of ICU stays'
 -- how many distinct ICU stays?
-SELECT
-    COUNT(DISTINCT i.stay_id) as num_stays,
-FROM icustays as i;
+select count(distinct i.stay_id) as num_stays
+from icustays as i;
 
 .print '-- Saving stay_products (prints nothing on success)'
 -- one row for every ICU stay, paired with every product
-CREATE OR REPLACE TABLE stay_products as
-WITH stays as (
-    SELECT DISTINCT 
-        i.stay_id
-    FROM icustays as i
+create or replace table stay_products as
+with stays as (
+    select distinct i.stay_id
+    from icustays as i
 ),
+
 product_types as (
-    SELECT DISTINCT product FROM product_map
+    select distinct product from product_map
 )
-SELECT
+
+select
     s.stay_id,
     p.product
-FROM stays as s
-CROSS JOIN product_types as p;
+from stays as s
+cross join product_types as p;
 
 .print '-- stay_products: total rows, distinct stays, distinct products'
 -- look at the table
-SELECT
-    COUNT(*),
-    COUNT(DISTINCT s.stay_id),
-    COUNT(DISTINCT s.product)
-FROM stay_products AS s;
+select
+    count(*),
+    count(distinct s.stay_id),
+    count(distinct s.product)
+from stay_products as s;
 
 
 -- Step 3: fill in the zeros --------------------------------------------------
@@ -123,31 +125,33 @@ FROM stay_products AS s;
 
 -- above approach matches pattern 12 closely but does not use stay_products. hard to read.
 
-WITH bag_counts as (
-    SELECT
+with bag_counts as (
+    select
         b.stay_id,
         b.product,
-        COUNT(b.bag_id) as n_bags
-    FROM bags as b
-    GROUP BY b.stay_id, b.product
+        count(b.bag_id) as n_bags
+    from bags as b
+    group by b.stay_id, b.product
 ),
+
 filled as (
-    SELECT
+    select
         s.stay_id,
         s.product,
-        COALESCE(b.n_bags, 0) as n_bags
-    FROM stay_products as s
-    LEFT JOIN bag_counts as b
-        ON b.stay_id = s.stay_id
-        AND b.product = s.product
+        coalesce(b.n_bags, 0) as n_bags
+    from stay_products as s
+    left join bag_counts as b
+        on b.stay_id = s.stay_id
+        and b.product = s.product
 )
-SELECT
-    COUNT(*) AS total_rows,
-    COUNT(*) FILTER (WHERE f.n_bags = 0) as zero_rows,
-    COUNT(*) FILTER (WHERE f.n_bags > 0) as nonzero_rows,
-    COUNT(*) FILTER (WHERE f.n_bags IS NULL) as null_rows,
-    (SELECT COUNT(*) FROM bag_counts) as step1_rows
-FROM filled as f;
+
+select
+    count(*) as total_rows,
+    count(*) filter (where f.n_bags = 0) as zero_rows,
+    count(*) filter (where f.n_bags > 0) as nonzero_rows,
+    count(*) filter (where f.n_bags is null) as null_rows,
+    (select count(*) from bag_counts) as step1_rows
+from filled as f;
 
 -- Step 4: first bag -----------------------------------------------------------
 -- Add first_bag_start: the starttime of the stay's first bag of that
@@ -195,57 +199,57 @@ FROM filled as f;
 -- Q1: What share of ICU stays received no platelets? No red cells? No plasma?
 -- A:
 
-SELECT
+select
     b.product,
     b.n_stays,
     b.share
-FROM bag_distribution as b
-WHERE b.n_bags == 0;
+from bag_distribution as b
+where b.n_bags == 0;
 
 -- Q2: Of the stays that received platelets, what share received exactly one
 --     bag?
 -- A:
 
-SELECT b.n_stays
-FROM bag_distribution as b
-WHERE b.product = 'platelets' AND b.n_bags = 1;
+select b.n_stays
+from bag_distribution as b
+where b.product = 'platelets' and b.n_bags = 1;
 
 -- above is n_stays for 1 bag
-SELECT SUM(b.n_stays)
-FROM bag_distribution as b
-WHERE b.product = 'platelets' AND b.n_bags > 0;
+select sum(b.n_stays)
+from bag_distribution as b
+where b.product = 'platelets' and b.n_bags > 0;
 
 -- use filters since AND logic in first select makes WHERE inapplicable
 
-SELECT
-    SUM(b.n_stays) FILTER (WHERE b.n_bags=1) AS numerator,
-    SUM(b.n_stays) FILTER (WHERE b.n_bags>0) AS denominator,
-    SUM(b.n_stays) FILTER (WHERE b.n_bags=1)/SUM(b.n_stays) FILTER (WHERE b.n_bags>0)
-FROM bag_distribution as b
-WHERE b.product = 'platelets';
+select
+    sum(b.n_stays) filter (where b.n_bags = 1) as numerator,
+    sum(b.n_stays) filter (where b.n_bags > 0) as denominator,
+    sum(b.n_stays) filter (where b.n_bags = 1)
+    / sum(b.n_stays) filter (where b.n_bags > 0)
+from bag_distribution as b
+where b.product = 'platelets';
 
 -- Q3: What is the most platelet bags any single stay received, and how many
 --     stays received 10 or more?
 -- A:
 
-SELECT *
-FROM bag_distribution as b
-WHERE b.product = 'platelets'
-ORDER BY b.n_bags DESC
-LIMIT 1;
+select *
+from bag_distribution as b
+where b.product = 'platelets'
+order by b.n_bags desc
+limit 1;
 
-SELECT
-    SUM(b.n_stays)
-FROM bag_distribution as b
-WHERE b.n_bags >= 10 AND b.product = 'platelets';
+select sum(b.n_stays)
+from bag_distribution as b
+where b.n_bags >= 10 and b.product = 'platelets';
 
 
 -- Q4: Compare the three products: which one has the most stays with large
 --     counts (5 or more bags)?
 -- A:
 
-SELECT
+select
     b.product,
-    SUM(b.n_stays) FILTER (WHERE b.n_bags >= 5) AS stays
-FROM bag_distribution as b
-GROUP BY b.product;
+    sum(b.n_stays) filter (where b.n_bags >= 5) as stays
+from bag_distribution as b
+group by b.product;

@@ -2,6 +2,6 @@
 -- The view itself lives in sql/views.sql.
 .read sql/views.sql
 
-SELECT *
-FROM product_map
-ORDER BY itemid;
+select *
+from product_map
+order by itemid;

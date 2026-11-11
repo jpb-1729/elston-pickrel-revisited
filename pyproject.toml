@@ -7,3 +7,8 @@ dependencies = [
     "numpy>=2.5.3",
     "pandas>=3.0.6",
 ]
+
+[dependency-groups]
+dev = [
+    "sqlfluff>=4.5.0",
+]
