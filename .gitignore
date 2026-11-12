@@ -6,3 +6,6 @@ synth*/
 
 .venv/
 __pycache__/
+
+# Exported from sql/phase2.sql.
+phase2/*.csv

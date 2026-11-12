@@ -6,7 +6,8 @@ finding them is part of the exercise. The generator also writes an answer key
 to `synth/answer_key/`: open it only to grade a finished challenge.
 
 **Don't read `generate_synthetic_mimic.py` while doing the exercise.** Its
-code spells out the answers, just like the answer key.
+code spells out the answers, just like the answer key. The same goes for
+`phase2/grade.py`.
 
 Stuck? `HINTS.md` has hints for each step, from gentle nudges to the shape
 of the SQL. It never gives the answer, but read it only when you need it.
@@ -600,8 +601,94 @@ rows, and your four answers are written down.
 8. **Answer the questions** with queries on `stay_bags` and
    `bag_distribution`, and write the answers as comments.
 
-## Not yet written
+## Phase 2: fitting demand models
 
-These are referenced in the generator but not defined here yet:
+Finish Challenge 3 first: this phase builds on `bags` and `stay_bags`.
 
-- **Phase 2:** fitting demand models (graded against `effective_targets.json`).
+**The goal.** Describe blood demand with a small number of parameters: how often transfusions happen, and how many bags each one takes. Those are the two numbers a blood bank needs to decide how much to keep on the shelf.
+
+**The idea.** Bags given to one patient within a short time belong to one decision: "this patient needs blood now". Call that an **episode**. Demand then has two parts:
+
+1. **How often** episodes happen: episodes per day.
+2. **How big** they are: bags per episode. Every episode has at least one bag, so this needs a distribution that starts at 1.
+
+You'll fit three candidates for the size, and let the data choose between them.
+
+| Candidate | P(k), for k = 1, 2, 3, ... | Mean | Parameter |
+|---|---|---|---|
+| Geometric | `p (1-p)^(k-1)` | `1 / p` | 0 < p < 1 |
+| Zero-truncated Poisson | `λ^k e^(-λ) / (k! (1 - e^(-λ)))` | `λ / (1 - e^(-λ))` | λ > 0 |
+| Logarithmic | `-θ^k / (k ln(1-θ))` | `-θ / ((1-θ) ln(1-θ))` | 0 < θ < 1 |
+
+For all three, the best-fitting parameter is the one whose model mean equals the mean of your data. That's why `phase2/fit.py` gives you `solve_for_mean`.
+
+**Where to look.** `bags` and `stay_bags`, plus `patients` for step 5.
+
+**What to produce.**
+
+1. A view named `episodes`, one row per episode:
+
+   | Column | What goes in it |
+   |---|---|
+   | `stay_id` | The ICU stay |
+   | `product` | `platelets`, `rbc` or `plasma` |
+   | `episode_no` | 1, 2, 3, ... within the stay and product |
+   | `episode_start` | `starttime` of the episode's first bag |
+   | `n_bags` | How many bags the episode had |
+
+2. `phase2/episodes.csv` and `phase2/stay_bags.csv`, from the export at the end of `sql/phase2.sql`.
+3. `phase2/results.json`, written by `phase2/fit.py` once its TODOs are filled in.
+4. Your answers, as comments in `sql/phase2.sql` and `phase2/fit.py`.
+
+**New pattern: 15. Look at the previous row with `lag`.** A window function can read the row before this one, inside a group and in the order you choose. Then a running `sum` of a 0/1 flag numbers the groups. Here it splits toy clicks into sessions, wherever the gap is more than 10 minutes:
+
+    with clicks(user_id, t) as (
+        values (1, 0), (1, 3), (1, 50), (1, 52), (2, 7)
+    ),
+    gaps as (
+        select *, lag(t) over (partition by user_id order by t) as prev_t
+        from clicks
+    ),
+    flagged as (
+        select *, case when prev_t is null or t - prev_t > 10 then 1 else 0 end as is_new
+        from gaps
+    )
+    select *, sum(is_new) over (partition by user_id order by t) as session_no
+    from flagged;
+
+Run it and read the columns from left to right. Timestamps subtract to an interval, so compare to `interval 6 hour`, or turn it into hours with `extract(epoch from a - b) / 3600`.
+
+**What makes it tricky.** Two things. Where one episode ends and the next begins is something you read off the data, not something you're told. And before you trust a per-day number, ask what a "day" is in this database. Step 4 is meant to look wrong: work out why before you go on.
+
+**How you'll know it's right.** From the project root:
+
+    uv run python phase2/grade.py
+
+It compares your `phase2/episodes.csv` and `phase2/results.json` with the answer key, and prints PASS or FAIL for each check, without showing any key values. Don't read `grade.py` while doing the exercise: like the generator, it spells out the answers. A few numbers in the key can't be recovered from this data, so they aren't graded.
+
+**You're done when** every check passes and your answers are written down.
+
+### Working through it
+
+`sql/phase2.sql` covers steps 1 to 7 and `phase2/fit.py` covers 8 to 11.
+
+1. **Gaps.** For each stay and product, how long after the previous bag ended did each bag start? Count the gaps in whole hours. *(pattern 15, 5)*
+   **On track:** a big pile of short gaps, an empty stretch, then a long thin spread. Pick a threshold in the middle of the empty stretch.
+2. **Build `episodes`.** Flag, number, then group. *(patterns 11, 15)*
+   **On track:** fewer rows than `bags`, and at least as many as there are stays with that product.
+3. **Check it.** The episodes' `n_bags` should add up to the bags per product. *(pattern 5)*
+   **On track:** every comparison is true.
+4. **Episodes per day, first attempt.** Count per product per calendar day, zeros included, from the first date to the last. *(pattern 12)*
+   **On track:** you get a number. Look hard at the length of your calendar before believing it.
+5. **What a day means.** Reread the field guide's note on dates, and look at `patients.anchor_year_group`. How many real days does the data cover? Compute episodes per day from that.
+   **On track:** you can say in one sentence why step 4's calendar can't be used, and why your new denominator can.
+6. **What survives.** Count episodes per day of the week. *(pattern 5)*
+   **On track:** you can say why this is safe when step 4 wasn't.
+7. **Per stay.** Share of stays with any bag, then the mean and `var_samp` of `n_bags` among those stays. *(patterns 5, 6)*
+   **On track:** the mean among stays with bags is above 1.
+8. **Fit the sizes.** In `phase2/fit.py`, write the three `fit_` functions from the table.
+   **On track:** each returns its parameter inside the range in the table.
+9. **Choose a size model.** Compare the log-likelihoods. All are negative; closest to 0 wins. Check the fit by comparing the model's P(1) with your share of one-bag episodes.
+10. **Bags per stay.** Run `compare_models` on the counts of stays with at least one bag, and fill in the `stays_` fields. The stays with 0 were counted by `stays_any_share`.
+11. **Bags per day.** Multiply episodes per day by bags per episode.
+    **On track:** it's above episodes per day.

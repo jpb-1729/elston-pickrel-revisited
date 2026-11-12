@@ -355,3 +355,144 @@ take? Is any combination surprising?
   bags, or counted copies.
 
 </details>
+
+## Phase 2
+
+### Step 1: gaps
+
+<details><summary>Hint 1</summary>
+
+Start from pattern 15. Your "clicks" are bags, your user is the stay and
+product together, and `t` is `starttime`. Compare to the previous bag's
+`endtime`, not its `starttime`.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+    with gaps as (
+        select product, starttime,
+               lag(endtime) over (partition by stay_id, product order by starttime) as prev_end
+        from bags
+    )
+    select floor(extract(epoch from starttime - prev_end) / 3600) as hours, count(*)
+    from gaps
+    where prev_end is not null
+    group by all
+    order by hours
+    limit 40;
+
+Look for the stretch of hours with almost nothing in it.
+
+</details>
+
+### Step 2: build the episodes
+
+<details><summary>Hint 1</summary>
+
+Three steps with `with`, exactly like pattern 15: gaps, then a 0/1 flag, then
+the running `sum`. A fourth step groups by stay, product and episode number.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+The flag is 1 when `prev_end is null` (the first bag) or when
+`starttime - prev_end > interval N hour`, for your N. The window for the
+running `sum` has the same `partition by` and `order by` as the `lag`.
+
+</details>
+
+### Step 4: episodes per day
+
+<details><summary>Hint 1</summary>
+
+`cast(episode_start as date)` gives the day. Make the list of days with
+`select unnest(generate_series(date '...', date '...', interval 1 day)) as day`,
+and use pattern 12 to fill in zeros.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+Compare `count(distinct cast(episode_start as date))` with how many days lie
+between the first and last dates. Then compare both with how long a hospital
+would have to run to produce this data.
+
+</details>
+
+### Step 5: what a day means
+
+<details><summary>Hint 1</summary>
+
+Read the field guide's note on dates again, slowly. What happens to two
+patients treated on the same real day?
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+Each patient's dates are moved by their own amount. So two rows with the same
+date in this database usually weren't the same real day, and two rows on the
+same real day usually have different dates here. Counting per date adds up
+patients who never met.
+
+</details>
+
+<details><summary>Hint 3</summary>
+
+You can still get an average rate: total episodes divided by real days covered.
+`select distinct anchor_year_group from patients` shows the real years. In
+DuckDB, `date '2020-01-01' - date '2000-01-01'` is a number of days.
+
+The day-to-day *spread* of real demand can't be measured this way, so the
+phase doesn't ask for it.
+
+</details>
+
+### Step 8: fit the sizes
+
+<details><summary>Hint 1</summary>
+
+Each function returns `(parameter, log_pmf)`, with `log_pmf` a function of `k`.
+Take the log of the P(k) column of the table. Python's `math.lgamma(k + 1)` is
+`ln(k!)`.
+
+</details>
+
+<details><summary>Hint 2</summary>
+
+The geometric, as a model for the other two:
+
+    def fit_geometric(mean):
+        p = 1 / mean
+        return p, lambda k: math.log(p) + (k - 1) * math.log(1 - p)
+
+The other two have no formula for the parameter, so use `solve_for_mean`, with
+`lo` and `hi` from the parameter's range. Stay just inside it: `1e-9` and
+`1 - 1e-12` for θ, and `1e-9` and `1000` for λ.
+
+</details>
+
+### Step 10: bags per stay
+
+<details><summary>Hint</summary>
+
+`stays[stays > 0]` keeps the stays with at least one bag. Use `.mean()` and
+`.var()` on that; pandas' `.var()` matches `var_samp`. `compare_models` takes the
+same filtered Series. `stays_any_share` is the one number that needs the
+unfiltered `stays`.
+
+</details>
+
+### Reading the grading output
+
+<details><summary>Hint</summary>
+
+- **Episodes fail:** check your threshold against the histogram from step 1.
+- **Sizes pass but `episodes_per_day` fails:** your denominator is the wrong
+  number of days.
+- **The `stays_` checks fail:** check which of them should include the stays
+  with 0 bags.
+
+</details>
