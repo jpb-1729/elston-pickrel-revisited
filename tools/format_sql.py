@@ -22,7 +22,9 @@ def format_file(path: Path) -> int:
     original = path.read_text()
     path.write_text(DOT_COMMAND.sub(lambda m: MARKER + m.group(1), original))
     try:
-        result = subprocess.run([sys.executable, "-m", "sqlfluff", "format", str(path)])
+        result = subprocess.run(
+            [sys.executable, "-m", "sqlfluff", "format", str(path)], check=False
+        )
     finally:
         formatted = path.read_text()
         path.write_text(HIDDEN.sub(lambda m: m.group(1), formatted))

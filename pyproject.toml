@@ -10,5 +10,15 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "ruff>=0.17.5",
     "sqlfluff>=4.5.0",
 ]
+
+[tool.ruff]
+line-length = 88
+# The generator and grader spell out the exercise's answers; leave them alone.
+extend-exclude = ["generate_synthetic_mimic.py", "phase2/grade.py"]
+
+[tool.ruff.lint]
+# Defaults plus import sorting, pyupgrade and common bug patterns.
+extend-select = ["I", "UP", "B"]
