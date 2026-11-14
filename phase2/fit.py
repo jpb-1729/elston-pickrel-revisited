@@ -1,9 +1,14 @@
-"""Phase 2 worksheet: the modelling part. Steps 8 to 11 of EXERCISE.md.
+"""Fit transfusion demand models per blood product (Phase 2 of EXERCISE.md).
 
-Fill in every TODO, then:  uv run python phase2/fit.py
-Then check it:             uv run python phase2/grade.py
+For each product: episodes per real day, and three candidate distributions for
+bags per episode and bags per stay, compared by log-likelihood. Writes
+phase2/results.json.
+
+Run:    uv run python phase2/fit.py
+Check:  uv run python phase2/grade.py
 Needs phase2/episodes.csv and phase2/stay_bags.csv from sql/phase2.sql.
 """
+
 import json
 import math
 from pathlib import Path
@@ -12,27 +17,32 @@ import pandas as pd
 
 HERE = Path(__file__).parent
 PRODUCTS = ["platelets", "rbc", "plasma"]
-MODELS = ["geometric", "poisson", "logarithmic"]
 
-episodes = pd.read_csv(HERE / "episodes.csv")
-stay_bags = pd.read_csv(HERE / "stay_bags.csv")
-
-# Step 5: how many real days the data covers.
-WINDOW_DAYS = None  # TODO
+# Real days covered: 2008-01-01 to 2019-12-31, from patients.anchor_year_group.
+# The dates in the data are shifted per patient, so they can't give this.
+WINDOW_DAYS = 4383
 
 
 def solve_for_mean(mean_of, target, lo, hi):
     """The parameter between lo and hi whose model mean equals target.
 
-    mean_of must get larger as its parameter gets larger.
+    mean_of must get larger as its parameter gets larger. Bisects until the
+    interval can't shrink any further in floating point.
     """
-    for _ in range(200):
+    while True:
         mid = (lo + hi) / 2
+        if mid in (lo, hi):
+            return mid
         if mean_of(mid) < target:
             lo = mid
         else:
             hi = mid
-    return (lo + hi) / 2
+
+
+def check_mean(mean, name):
+    """Every size model starts at 1, so it can only fit a finite mean above 1."""
+    if not math.isfinite(mean) or mean <= 1:
+        raise ValueError(f"the {name} needs a finite mean above 1, got {mean}")
 
 
 def log_likelihood(log_pmf, counts):
@@ -40,22 +50,105 @@ def log_likelihood(log_pmf, counts):
     return sum(n * log_pmf(k) for k, n in counts.items())
 
 
-# Step 8: each function takes the mean of the sizes and returns the fitted
-# parameter and a function k -> log P(k). See the table in EXERCISE.md.
 def fit_geometric(mean):
-    raise NotImplementedError  # TODO
+    """Geometric on k = 1, 2, ...: P(k) = p (1-p)^(k-1), mean 1/p."""
+    check_mean(mean, "geometric")
+    p = 1 / mean
+    log_p = math.log(p)
+    log_q = math.log1p(-p)  # log(1 - p)
+
+    def log_pmf(k):
+        if k < 1:
+            return -math.inf
+        return (k - 1) * log_q + log_p
+
+    return p, log_pmf
 
 
 def fit_poisson(mean):
     """The zero-truncated Poisson: it can't produce a 0."""
-    raise NotImplementedError  # TODO
+    check_mean(mean, "zero-truncated Poisson")
+
+    def excess_and_slope(lam):
+        """h(lam) = lam / (1 - e^-lam) - 1, the model mean minus 1, and h'(lam).
+
+        Working with the excess over 1 avoids subtracting two numbers that are
+        both close to 1 when the mean is close to 1.
+        """
+        if lam < 0.1:
+            # Series for small lam, where the closed forms below lose accuracy:
+            # h = lam/2 + lam^2/12 - lam^4/720 + lam^6/30240 - ...
+            z = lam * lam
+            excess = lam * (
+                0.5
+                + lam
+                * (
+                    1 / 12
+                    + z
+                    * (-1 / 720 + z * (1 / 30240 + z * (-1 / 1209600 + z / 47900160)))
+                )
+            )
+            slope = 0.5 + lam * (
+                1 / 6
+                + z * (-1 / 180 + z * (1 / 5040 + z * (-1 / 151200 + z / 4790016)))
+            )
+            return excess, slope
+        q = -math.expm1(-lam)  # 1 - e^-lam
+        return (lam - q) / q, (q - lam * math.exp(-lam)) / (q * q)
+
+    # Newton's method on h(lam) = mean - 1. h is increasing and convex, so
+    # starting above the answer, every step moves down towards it without
+    # overshooting. min(mean, 2 * (mean - 1)) is always above the answer.
+    d = mean - 1
+    lambda_ = min(mean, 2 * d)
+    for _ in range(20):
+        excess, slope = excess_and_slope(lambda_)
+        step = (excess - d) / slope
+        updated = lambda_ - step
+        converged = updated == lambda_ or abs(step) <= 1e-12 * updated
+        lambda_ = updated
+        if converged:
+            break
+    else:
+        raise ArithmeticError("zero-truncated Poisson fit did not converge")
+
+    # log P(k) = (k - 1) log(lam) - log(k!) + log P(1),
+    # where P(1) = lam e^-lam / (1 - e^-lam) = (1 + h) e^-lam.
+    log_lambda = math.log(lambda_)
+    log_p1 = math.log1p(excess_and_slope(lambda_)[0]) - lambda_
+
+    def log_pmf(k):
+        if k < 1:
+            return -math.inf
+        return (k - 1) * log_lambda - math.lgamma(k + 1) + log_p1
+
+    return lambda_, log_pmf
 
 
 def fit_logarithmic(mean):
-    raise NotImplementedError  # TODO
+    """Logarithmic on k = 1, 2, ...: P(k) = -theta^k / (k ln(1-theta))."""
+    check_mean(mean, "logarithmic")
+
+    def model_mean(theta):
+        return -theta / ((1 - theta) * math.log1p(-theta))
+
+    theta = solve_for_mean(model_mean, mean, 0.0, math.nextafter(1.0, 0.0))
+    log_theta = math.log(theta)
+    log_normalizer = math.log(-math.log1p(-theta))
+
+    def log_pmf(k):
+        if k < 1:
+            return -math.inf
+        return k * log_theta - math.log(k) - log_normalizer
+
+    return theta, log_pmf
 
 
-FITS = {"geometric": fit_geometric, "poisson": fit_poisson, "logarithmic": fit_logarithmic}
+FITS = {
+    "geometric": fit_geometric,
+    "poisson": fit_poisson,
+    "logarithmic": fit_logarithmic,
+}
 
 
 def compare_models(sizes):
@@ -63,39 +156,46 @@ def compare_models(sizes):
     counts = sizes.value_counts().to_dict()
     mean = sizes.mean()
     fits = {name: fit(mean) for name, fit in FITS.items()}
-    return {name: (param, log_likelihood(log_pmf, counts))
-            for name, (param, log_pmf) in fits.items()}
-
-
-results = {"window_days": WINDOW_DAYS}
-for product in PRODUCTS:
-    sizes = episodes.loc[episodes["product"] == product, "n_bags"]
-    stays = stay_bags.loc[stay_bags["product"] == product, "n_bags"]
-    fitted = compare_models(sizes)
-
-    # Step 9: pick the best of MODELS by log-likelihood (closest to 0 is best).
-    best_size_model = None  # TODO
-
-    # Step 10: the same comparison for bags per stay, among stays with any.
-    best_stay_model = None  # TODO
-
-    results[product] = {
-        # Step 5
-        "episodes": int(len(sizes)),
-        "episodes_per_day": None,  # TODO
-        # Step 8
-        "bags_per_episode": None,  # TODO
-        "share_one_bag": None,  # TODO
-        "size_params": {name: fit[0] for name, fit in fitted.items()},
-        "best_size_model": best_size_model,
-        # Step 11: expected bags per real day
-        "bags_per_day": None,  # TODO
-        # Step 10
-        "stays_any_share": None,  # TODO: share of ALL stays with at least one bag
-        "stays_bags_mean": None,  # TODO: among stays with at least one bag
-        "stays_bags_var": None,  # TODO: among stays with at least one bag
-        "best_stay_model": best_stay_model,
+    return {
+        name: (param, log_likelihood(log_pmf, counts))
+        for name, (param, log_pmf) in fits.items()
     }
 
-(HERE / "results.json").write_text(json.dumps(results, indent=2))
-print("Wrote", HERE / "results.json")
+
+def best_model(fitted):
+    """The model with the highest log-likelihood, i.e. the one closest to 0."""
+    return max(fitted, key=lambda name: fitted[name][1])
+
+
+def main():
+    episodes = pd.read_csv(HERE / "episodes.csv")
+    stay_bags = pd.read_csv(HERE / "stay_bags.csv")
+
+    results = {"window_days": WINDOW_DAYS}
+    for product in PRODUCTS:
+        sizes = episodes.loc[episodes["product"] == product, "n_bags"]
+        stays = stay_bags.loc[stay_bags["product"] == product, "n_bags"]
+        stays_any = stays[stays >= 1]  # the models can't produce a 0
+        size_fitted = compare_models(sizes)
+        stay_fitted = compare_models(stays_any)
+
+        results[product] = {
+            "episodes": len(sizes),
+            "episodes_per_day": len(sizes) / WINDOW_DAYS,
+            "bags_per_episode": sizes.mean(),
+            "share_one_bag": (sizes == 1).mean(),
+            "size_params": {name: param for name, (param, _) in size_fitted.items()},
+            "best_size_model": best_model(size_fitted),
+            "bags_per_day": sizes.sum() / WINDOW_DAYS,
+            "stays_any_share": len(stays_any) / len(stays),  # out of ALL stays
+            "stays_bags_mean": stays_any.mean(),  # among stays with any bag
+            "stays_bags_var": stays_any.var(),  # n - 1, same as var_samp
+            "best_stay_model": best_model(stay_fitted),
+        }
+
+    (HERE / "results.json").write_text(json.dumps(results, indent=2))
+    print("Wrote", HERE / "results.json")
+
+
+if __name__ == "__main__":
+    main()
