@@ -4,6 +4,10 @@ synth*/
 *.duckdb
 *.duckdb.wal
 
+# MIMIC-IV Clinical Database Demo v2.2 (open access, 100 patients):
+# download from physionet.org/content/mimic-iv-demo, never commit.
+mimic_demo/
+
 .venv/
 __pycache__/
 
