@@ -1,0 +1,54 @@
+{
+  "window_days": 4383,
+  "platelets": {
+    "episodes": 4484,
+    "episodes_per_day": 1.023043577458362,
+    "bags_per_episode": 1.6293487957181088,
+    "share_one_bag": 0.7154326494201606,
+    "size_params": {
+      "geometric": 0.6137421297563647,
+      "poisson": 1.071060861236589,
+      "logarithmic": 0.5967125483232698
+    },
+    "best_size_model": "logarithmic",
+    "bags_per_day": 1.6668948208989276,
+    "stays_any_share": 0.06057385759829968,
+    "stays_bags_mean": 1.9719298245614034,
+    "stays_bags_var": 3.8237258914023724,
+    "best_stay_model": "logarithmic"
+  },
+  "rbc": {
+    "episodes": 12402,
+    "episodes_per_day": 2.8295687885010268,
+    "bags_per_episode": 1.6091759393646186,
+    "share_one_bag": 0.6606998871149815,
+    "size_params": {
+      "geometric": 0.6214360875883149,
+      "poisson": 1.0409389874551056,
+      "logarithmic": 0.5878605026208905
+    },
+    "best_size_model": "logarithmic",
+    "bags_per_day": 4.5532740132329454,
+    "stays_any_share": 0.19573285375623314,
+    "stays_bags_mean": 1.6669729368526562,
+    "stays_bags_var": 1.374924492459405,
+    "best_stay_model": "logarithmic"
+  },
+  "plasma": {
+    "episodes": 6635,
+    "episodes_per_day": 1.513803331051791,
+    "bags_per_episode": 1.5214770158251696,
+    "share_one_bag": 0.6916352675207235,
+    "size_params": {
+      "geometric": 0.6572560673600792,
+      "poisson": 0.9075328116918671,
+      "logarithmic": 0.5451995122014366
+    },
+    "best_size_model": "logarithmic",
+    "bags_per_day": 2.3032169746748803,
+    "stays_any_share": 0.10715278345459005,
+    "stays_bags_mean": 1.5402807445834605,
+    "stays_bags_var": 1.0691081769311714,
+    "best_stay_model": "logarithmic"
+  }
+}
