@@ -1,0 +1,33 @@
+product,scenario,policy,stock_level,loss_per_year,short_bags_per_year,outdated_per_year
+platelets,3 usable days,order up to S,0,15210.42,608.42,0.00
+platelets,3 usable days,order up to S,1,9411.41,374.63,11.39
+platelets,3 usable days,order up to S,2,5885.71,229.06,39.80
+platelets,3 usable days,order up to S,3,3827.81,139.45,85.37
+platelets,3 usable days,order up to S,4,2699.79,84.65,145.88
+platelets,3 usable days,order up to S,5,2156.21,51.27,218.59
+platelets,3 usable days,order up to S,6,1979.18,31.01,301.01
+platelets,3 usable days,order up to S,7,2032.41,18.73,391.07
+platelets,3 usable days,order up to S,8,2231.03,11.30,487.16
+platelets,3 usable days,order up to S,9,2522.23,6.81,588.00
+platelets,3 usable days,order up to S,10,2873.07,4.10,692.64
+platelets,3 usable days,order up to S,11,3262.92,2.47,800.30
+platelets,3 usable days,order up to S,12,3678.78,1.48,910.42
+platelets,3 usable days,order up to S,13,4112.36,0.89,1022.51
+platelets,3 usable days,order up to S,14,4558.30,0.54,1136.22
+platelets,3 usable days,optimal,,1942.04,27.36,314.49
+platelets,5 usable days,order up to S,0,15210.42,608.42,0.00
+platelets,5 usable days,order up to S,1,9371.49,374.63,1.41
+platelets,5 usable days,order up to S,2,5752.81,229.06,6.58
+platelets,5 usable days,order up to S,3,3556.54,139.45,17.55
+platelets,5 usable days,order up to S,4,2258.20,84.65,35.48
+platelets,5 usable days,order up to S,5,1524.16,51.27,60.58
+platelets,5 usable days,order up to S,6,1144.86,31.01,92.43
+platelets,5 usable days,order up to S,7,989.41,18.73,130.32
+platelets,5 usable days,order up to S,8,976.18,11.30,173.44
+platelets,5 usable days,order up to S,9,1054.25,6.81,221.01
+platelets,5 usable days,order up to S,10,1191.77,4.10,272.31
+platelets,5 usable days,order up to S,11,1368.70,2.47,326.75
+platelets,5 usable days,order up to S,12,1572.34,1.48,383.81
+platelets,5 usable days,order up to S,13,1794.56,0.89,443.06
+platelets,5 usable days,order up to S,14,2030.07,0.54,504.16
+platelets,5 usable days,optimal,,937.89,13.34,151.12
