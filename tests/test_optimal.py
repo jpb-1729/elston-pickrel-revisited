@@ -10,6 +10,7 @@ from stocking.optimal import (
     loss,
     order_up_to,
     solve,
+    solve_capped,
     visit_shares,
 )
 from stocking.simulate import sample_daily_demand, simulate
@@ -108,6 +109,19 @@ def test_solve_and_evaluate_agree(model):
 def test_raising_the_cap_changes_nothing(model, pmf):
     bigger = build_model(pmf, usable_days=3, max_stock=MAX_STOCK + 4)
     assert solve(bigger, loss(bigger))[0] == pytest.approx(solve(model, loss(model))[0])
+
+
+@pytest.mark.parametrize("rate", [RATE, 2.5 * RATE])
+def test_the_chosen_cap_is_never_reached(rate):
+    # Whatever the demand, the cap solve_capped picks gives the same answer as
+    # a cap well above it.
+    pmf = demand_pmf(rate, THETA)
+    model, policy = solve_capped(pmf, usable_days=3)
+    cap = model.allowed.shape[1] - 1
+    bigger = build_model(pmf, usable_days=3, max_stock=cap + 6)
+    best = solve(model, loss(model))[0]
+    assert evaluate(model, loss(model), policy) == pytest.approx(best)
+    assert solve(bigger, loss(bigger))[0] == pytest.approx(best)
 
 
 def test_longer_life_never_costs_more(model, pmf):

@@ -14,13 +14,13 @@ The day runs as in simulate.py, with next-morning delivery:
           25:4 ratio of Elston & Pickrel (1963).
 
 The answer is exact for this model, not for a real blood bank: demand is the
-fitted model with every day independent, and stock is capped at MAX_STOCK
-bags (raising the cap does not change the results).
+fitted model with every day independent, and stock is capped. The cap is set
+from the demand and raised until the best policy never reaches it, so it
+does not change the results.
 
 Writes stocking/optimal.csv, stocking/platelets_optimal.png (the loss for
-every S against the best possible), stocking/platelets_orders.png (one shelf
-total, to show that the best policy looks at the age of the stock) and
-stocking/platelets_orders_grid.png (its order for every shelf).
+every S against the best possible) and stocking/platelets_orders.png (one
+shelf total, to show that the best policy looks at the age of the stock).
 Run:  uv run python stocking/optimal.py
 """
 
@@ -47,12 +47,12 @@ from stocking.simulate import daily_demand_pmf
 
 HERE = Path(__file__).parent
 SHORT_COST, OUTDATE_COST = 25.0, 4.0
-MAX_STOCK = 20  # most bags held after ordering; far above any sensible level
 MAX_DEMAND = 80  # daily demand above this is counted as this
 # usable_days is shelf life minus age on arrival, as in run.py.
 SCENARIOS = [("3 usable days", 3), ("5 usable days", 5)]
-LEVELS = range(15)  # the S values compared with the optimal policy
-PLOT_LEVELS = (3, 12)  # the S values drawn; outside these the loss runs off the chart
+# The S values drawn run from this many below the smallest best S to this many
+# above the largest; further out the loss runs off the chart.
+PLOT_BELOW, PLOT_ABOVE = 3, 4
 
 # Shortage and outdating get their own colours, as blue and orange already
 # mean the two shelf lives in platelets_tradeoff.png.
@@ -60,16 +60,6 @@ VIOLET, YELLOW = "#6250d6", "#eda100"
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e0", "#fcfcfb"
 BLUE = "#2a78d6"  # bags ordered
 OLD, YOUNG = "#52514e", "#d3d2cc"  # bags on the shelf with one and two days left
-# One blue, light to dark, for an order of 0, 1, 2, ... bags.
-ORDER_BLUES = [
-    "#cde2fb",
-    "#9ec5f4",
-    "#6da7ec",
-    "#3987e5",
-    "#256abf",
-    "#184f95",
-    "#0d366b",
-]
 
 
 @dataclass
@@ -80,9 +70,11 @@ class Model:
     """
 
     states: np.ndarray  # [state, age]: bags with age + 1 days left
-    pmf: np.ndarray  # P(daily demand = d)
+    # P(demand = d) for d below max_stock, then P(demand >= max_stock): any
+    # demand that large empties the shelf, so transitions need no more.
+    next_pmf: np.ndarray
     allowed: np.ndarray  # [state, order]: may this order be placed?
-    next_state: np.ndarray  # [state, order, demand]: row of the next state
+    next_state: np.ndarray  # [state, order, d]: row of the next state, as next_pmf
     short: np.ndarray  # [state, order]: expected bags short tomorrow
     outdated: np.ndarray  # [state, order]: expected bags outdated tomorrow
 
@@ -103,8 +95,11 @@ def demand_pmf(episodes_per_day, theta, max_bags=MAX_DEMAND):
     return pmf
 
 
-def build_model(pmf, usable_days, max_stock=MAX_STOCK):
-    """Work out what every order does in every state, for every demand."""
+def build_model(pmf, usable_days, max_stock):
+    """Work out what every order does in every state, for every demand.
+
+    max_stock is the most bags that may be held after ordering.
+    """
     ages = usable_days - 1
     shelves = [
         s
@@ -123,7 +118,9 @@ def build_model(pmf, usable_days, max_stock=MAX_STOCK):
 
     total = states.sum(axis=1)
     allowed = total[:, None] + np.arange(orders) <= max_stock
-    next_state = np.zeros((n, orders, len(pmf)), dtype=np.int32)
+    steps = min(max_stock + 1, len(pmf))
+    next_pmf = np.append(pmf[: steps - 1], pmf[steps - 1 :].sum())
+    next_state = np.zeros((n, orders, steps), dtype=np.int32)
     short = np.zeros((n, orders))
     outdated = np.zeros((n, orders))
     for q in range(orders):
@@ -133,10 +130,10 @@ def build_model(pmf, usable_days, max_stock=MAX_STOCK):
         older = np.cumsum(stock, axis=2) - stock
         issued = np.minimum(stock, np.clip(demand[None, :, None] - older, 0, None))
         left = stock - issued
-        next_state[:, q, :] = row_of[left[:, :, 1:] @ place]
+        next_state[:, q, :] = row_of[left[:, :steps, 1:] @ place]
         short[:, q] = (demand[None, :] - issued.sum(axis=2)) @ pmf
         outdated[:, q] = left[:, :, 0] @ pmf
-    return Model(states, pmf, allowed, next_state, short, outdated)
+    return Model(states, next_pmf, allowed, next_state, short, outdated)
 
 
 def loss(model, short_cost=SHORT_COST, outdate_cost=OUTDATE_COST):
@@ -155,11 +152,12 @@ def _iterate(model, cost, policy, tol):
     value = np.zeros(len(rows))
     while True:
         if policy is None:
-            ahead = cost + value[model.next_state] @ model.pmf
+            ahead = cost + value[model.next_state] @ model.next_pmf
             ahead = np.where(model.allowed, ahead, np.inf)
             new = ahead.min(axis=1)
         else:
-            new = cost[rows, policy] + value[model.next_state[rows, policy]] @ model.pmf
+            following = value[model.next_state[rows, policy]]
+            new = cost[rows, policy] + following @ model.next_pmf
         change = new - value
         value = new - new[0]
         if change.max() - change.min() < tol:
@@ -186,27 +184,40 @@ def evaluate(model, cost, policy, tol=1e-9):
 
 def visit_shares(model, policy, tol=1e-12):
     """The long-run share of evenings spent in each state under a policy."""
-    rows = np.arange(len(model.states))
-    step = np.zeros((len(rows), len(rows)))
-    np.add.at(
-        step,
-        (rows[:, None], model.next_state[rows, policy]),
-        np.broadcast_to(model.pmf, (len(rows), len(model.pmf))),
-    )
-    share = np.full(len(rows), 1 / len(rows))
+    n = len(model.states)
+    following = model.next_state[np.arange(n), policy].ravel()
+    share = np.full(n, 1 / n)
     while True:
-        new = share @ step
+        moved = (share[:, None] * model.next_pmf).ravel()
+        new = np.bincount(following, weights=moved, minlength=n)
         if np.abs(new - share).sum() < tol:
             return new
         share = new
 
 
-def compare(model, levels):
+def solve_capped(pmf, usable_days, at_cap=1e-6):
+    """Build and solve the model with a stock cap the best policy never needs.
+
+    The first cap is a few bags above the 99th percentile of daily demand. It
+    is raised until the best policy holds the cap on under at_cap of evenings.
+    Returns the model and the best policy's order for each state.
+    """
+    cap = int(np.argmax(np.cumsum(pmf) >= 0.99)) + 5
+    while True:
+        model = build_model(pmf, usable_days, cap)
+        _, policy = solve(model, loss(model))
+        held = model.total + policy
+        if visit_shares(model, policy)[held >= cap].sum() < at_cap:
+            return model, policy
+        cap += 3
+
+
+def compare(model, best_policy):
     """Yearly results for every order-up-to-S level and for the best policy.
 
-    Returns the table rows and the best policy's order for each state.
+    S runs from 0 to the stock cap.
     """
-    _, best_policy = solve(model, loss(model))
+    levels = range(model.allowed.shape[1])
     policies = [("order up to S", s, order_up_to(model, s)) for s in levels]
     policies.append(("optimal", None, best_policy))
     rows = []
@@ -222,7 +233,7 @@ def compare(model, levels):
                 "outdated_per_year": outdated,
             }
         )
-    return rows, best_policy
+    return rows
 
 
 def headline(table):
@@ -242,13 +253,25 @@ def plot_platelets(table, path):
     below it, so the space between it and the lowest bar is all there is to
     gain from a smarter rule.
     """
+    picks = headline(table)
+    best_s = picks["stock_level"].dropna().astype(int)
+    window = (max(best_s.min() - PLOT_BELOW, 0), best_s.max() + PLOT_ABOVE)
+    drawn = table[table["stock_level"].between(*window)]
+    lift = 0.3 * drawn["loss_per_year"].max()  # how far the label sits above its bar
+    gaps = [
+        100 * (s / floor - 1)
+        for _, (s, floor) in picks.groupby("scenario", sort=False)["loss_per_year"]
+    ]
+    low, high = round(min(gaps)), round(max(gaps))
+    within = f"{low}%" if low == high else f"{low}–{high}%"
+
     dollars = FuncFormatter(lambda v, _: f"\\${v:,.0f}")
     fig, axes = plt.subplots(1, 2, figsize=(11, 5.8), sharey=True, facecolor=SURFACE)
     for ax, (label, group) in zip(
         axes, table.groupby("scenario", sort=False), strict=True
     ):
         floor = group.loc[group["policy"] == "optimal", "loss_per_year"].iloc[0]
-        levels = group[group["stock_level"].between(*PLOT_LEVELS)]
+        levels = group[group["stock_level"].between(*window)]
         s = levels["stock_level"].astype(int).to_numpy()
         short = SHORT_COST * levels["short_bags_per_year"].to_numpy()
         outdated = OUTDATE_COST * levels["outdated_per_year"].to_numpy()
@@ -267,7 +290,7 @@ def plot_platelets(table, path):
             f"Best possible: \\${floor:,.0f}\n"
             f"Gap: \\${gap:,.0f} ({100 * gap / floor:.1f}%)",
             xy=(s[best], total[best]),
-            xytext=(s[best] + 0.6, total[best] + 1150),
+            xytext=(s[best] + 0.6, total[best] + lift),
             ha="center",
             fontsize=10.5,
             color=INK,
@@ -287,7 +310,7 @@ def plot_platelets(table, path):
     axes[0].set_ylabel("Loss per year", color=MUTED)
 
     fig.suptitle(
-        "Platelets: the simple rule is within 2–4% of the best possible policy",
+        f"Platelets: the simple rule is within {within} of the best possible policy",
         x=0.06,
         y=0.975,
         ha="left",
@@ -361,15 +384,17 @@ def _paragraph(fig, y, text, heading=None, width=120):
     return y + 0.13
 
 
-def plot_orders_by_age(model, policy, level, simple_loss, best_loss, path, bags=5):
+def plot_orders_by_age(model, policy, level, simple_loss, best_loss, path):
     """One shelf total, every mix of ages: what each rule orders.
 
-    Each row is a shelf holding the same number of bags, with more of them
-    about to expire further down. Order-up-to-S orders the same in every row.
-    Shelves the best policy never reaches are left out. The text is written
-    for a reader who knows nothing about blood banking or inventory rules.
-    simple_loss and best_loss are the two rules' yearly losses, for the text.
+    Each row is a shelf holding level - 1 bags, so the simple rule orders one,
+    with more of them about to expire further down. Order-up-to-S orders the
+    same in every row. Shelves the best policy never reaches are left out. The
+    text is written for a reader who knows nothing about blood banking or
+    inventory rules. simple_loss and best_loss are the two rules' yearly
+    losses, for the text.
     """
+    bags = level - 1
     simple = order_up_to(model, level)
     reached = visit_shares(model, policy) >= 0.0005
     shelves = [
@@ -380,8 +405,17 @@ def plot_orders_by_age(model, policy, level, simple_loss, best_loss, path, bags=
     usable_days = model.states.shape[1] + 1
     top = len(shelves)
     unit = 0.47  # inches per bag square
+    # Columns, in bag squares: row labels, the shelf, then each rule's order
+    # with room for its "n bags" label.
+    most = [
+        max(int(orders[state]) for _, state in shelves) for orders in (simple, policy)
+    ]
+    shelf_x = 4.6
+    simple_x = shelf_x + bags * 0.9 + 2.2
+    best_x = simple_x + max(most[0], 1) * 0.9 + 4.4
+    span = max(best_x + max(most[1], 1) * 0.9 + 2.5, 0.91 * 11 / unit)
     table_height = unit * (top + 1.35)
-    width, height = 11, 5.3 + table_height
+    width, height = span * unit / 0.91, 5.3 + table_height
     fig = plt.figure(figsize=(width, height), facecolor=SURFACE)
 
     fig.text(
@@ -422,8 +456,6 @@ def plot_orders_by_age(model, policy, level, simple_loss, best_loss, path, bags=
         (0.045, 1 - (y + table_height) / height, 0.91, table_height / height)
     )
     ax.set_facecolor(SURFACE)
-    span = 0.91 * width / unit  # the axes' width in bag squares
-    shelf_x, simple_x, best_x = 4.6, 11.3, 16.6
     for x, label in [
         (shelf_x, f"On the shelf tonight: {bags} bags\n(number = days each has left)"),
         (simple_x, f"Order up to {level}\norders"),
@@ -480,100 +512,9 @@ def plot_orders_by_age(model, policy, level, simple_loss, best_loss, path, bags=
     fig.savefig(path, dpi=160, facecolor=SURFACE)
 
 
-def plot_order_grid(model, policy, level, path, upto=7):
-    """What order-up-to-S and the best policy order, by the age of the stock.
-
-    For 3 usable days the shelf each evening is two numbers: the bags that
-    expire tomorrow night and the bags with a day more. Order-up-to-S only sees
-    their sum, so its orders are the same along each diagonal. Shelves a policy
-    never reaches are faded. Returns the share of evenings on which the two
-    policies order differently.
-    """
-    simple = order_up_to(model, level)
-    differ = visit_shares(model, policy)[policy != simple].sum()
-    grid = np.arange(upto + 1)
-    fig, axes = plt.subplots(1, 2, figsize=(11, 6.95), sharey=True, facecolor=SURFACE)
-    panels = [(f"Order up to {level}", simple), ("Best possible policy", policy)]
-    for ax, (label, orders) in zip(axes, panels, strict=True):
-        ax.set_facecolor(SURFACE)
-        reached = visit_shares(model, orders) >= 0.0005
-        for old in grid:
-            for young in grid:
-                state = model.index([old, young])
-                q = int(orders[state])
-                fade = 1 if reached[state] else 0.3
-                ax.add_patch(
-                    plt.Rectangle(
-                        (young - 0.5, old - 0.5),
-                        1,
-                        1,
-                        facecolor=ORDER_BLUES[q],
-                        edgecolor=SURFACE,
-                        linewidth=2,
-                        alpha=fade,
-                    )
-                )
-                ax.text(
-                    young,
-                    old,
-                    str(q),
-                    ha="center",
-                    va="center",
-                    fontsize=11.5,
-                    color="white" if q >= 3 and reached[state] else INK,
-                    alpha=1 if reached[state] else 0.45,
-                )
-                if q != simple[state]:
-                    ax.add_patch(
-                        plt.Rectangle(
-                            (young - 0.41, old - 0.41),
-                            0.82,
-                            0.82,
-                            fill=False,
-                            edgecolor=INK,
-                            linewidth=1.6,
-                            alpha=fade,
-                        )
-                    )
-        ax.set_xlim(-0.5, upto + 0.5)
-        ax.set_ylim(-0.5, upto + 0.5)
-        ax.set_aspect("equal")
-        ax.set_xticks(grid)
-        ax.set_yticks(grid)
-        ax.set_title(label, loc="left", color=INK, fontsize=11.5, pad=8)
-        ax.set_xlabel("Bags with two days left", color=MUTED)
-        ax.tick_params(colors=MUTED, length=0)
-        for side in ax.spines.values():
-            side.set_visible(False)
-    axes[0].set_ylabel("Bags with one day left", color=MUTED)
-
-    fig.suptitle(
-        "Platelets: the best policy orders more when the shelf is nearly full and old",
-        x=0.06,
-        y=0.975,
-        ha="left",
-        color=INK,
-        fontsize=13.5,
-    )
-    fig.text(
-        0.06,
-        0.845,
-        "Bags to order each evening, by what is on the shelf (3 usable days). "
-        f"Order-up-to-{level} only looks at the total.\n"
-        "Outlined: the best policy orders more, which happens on "
-        f"{100 * differ:.0f}% of evenings.\n"
-        "Faded: shelves that policy never reaches. Synthetic ICU demand.",
-        fontsize=9.5,
-        color=MUTED,
-        linespacing=1.6,
-    )
-    fig.tight_layout(rect=(0.03, 0.01, 0.99, 0.855))
-    fig.savefig(path, dpi=160, facecolor=SURFACE)
-    return differ
-
-
 def print_orders(model, policy, upto=8):
     """The optimal order by stock age, for a two-age state (3 usable days)."""
+    upto = min(upto, (model.allowed.shape[1] - 1) // 2)  # old + young within the cap
     print("\nBags to order (3 usable days), by bags held:")
     print(
         "  expiring tonight |  with one more day: "
@@ -589,21 +530,24 @@ def main():
     pmf = demand_pmf(fit["episodes_per_day"], fit["size_params"]["logarithmic"])
     rows = []
     for label, usable_days in SCENARIOS:
-        model = build_model(pmf, usable_days)
-        compared, policy = compare(model, LEVELS)
-        for row in compared:
+        model, policy = solve_capped(pmf, usable_days)
+        for row in compare(model, policy):
             rows.append({"product": "platelets", "scenario": label, **row})
         if usable_days == 3:
             orders_model, orders_policy = model, policy
-        print(f"solved platelets, {label} ({len(model.states)} states)")
+        cap = model.allowed.shape[1] - 1
+        print(f"solved platelets, {label} ({len(model.states)} states, cap {cap})")
     table = pd.DataFrame(rows)
     table["stock_level"] = table["stock_level"].astype("Int64")
     table.to_csv(HERE / "optimal.csv", index=False, float_format="%.2f")
 
+    best = headline(table)
+    caps = table.groupby("scenario", sort=False)["stock_level"].max()
+    if (best.dropna()["stock_level"].to_numpy() >= caps.to_numpy()).any():
+        raise RuntimeError("the best S is at the stock cap; raise the cap")
     plot_platelets(table, HERE / "platelets_optimal.png")
 
     print(f"\nLoss at {SHORT_COST:g} per bag short, {OUTDATE_COST:g} per bag outdated:")
-    best = headline(table)
     print(best.round(1).to_string(index=False))
     for label, group in best.groupby("scenario", sort=False):
         s, floor = group["loss_per_year"]
@@ -620,9 +564,8 @@ def main():
         best_loss,
         HERE / "platelets_orders.png",
     )
-    differ = plot_order_grid(
-        orders_model, orders_policy, level, HERE / "platelets_orders_grid.png"
-    )
+    simple = order_up_to(orders_model, level)
+    differ = visit_shares(orders_model, orders_policy)[orders_policy != simple].sum()
     print(
         f"\nThe best policy and order-up-to-{level} differ on {100 * differ:.1f}% of evenings"
     )
