@@ -1,10 +1,6 @@
 -- Phase 2: fitting demand models (SQL part)
 --
--- Worksheet. Fill in each section in order. Answer each question in a comment
--- before moving on. Run the whole file:  .read sql/phase2.sql
--- Run one query:                         paste it at the duckdb prompt
---
--- Steps 8 to 11 and grading are in phase2/fit.py and phase2/grade.py.
+-- Model fitting and grading are in phase2/fit.py and phase2/grade.py.
 -- Creating views and exporting files needs a session opened without -readonly.
 .read sql/views.sql
 
@@ -290,8 +286,7 @@ order by product;
 
 
 -- Export ------------------------------------------------------------------------
--- Remove the comment markers once the episodes view exists. phase2/fit.py reads
--- these files, so it doesn't need the database open.
+-- phase2/fit.py reads these files, so it doesn't need the database open.
 
 copy (
     select

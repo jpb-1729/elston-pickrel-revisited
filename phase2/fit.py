@@ -1,4 +1,4 @@
-"""Fit transfusion demand models per blood product (Phase 2 of EXERCISE.md).
+"""Fit transfusion demand models per blood product.
 
 For each product: episodes per real day, and three candidate distributions for
 bags per episode and bags per stay, compared by log-likelihood. Writes

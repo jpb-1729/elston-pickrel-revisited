@@ -1,13 +1,7 @@
 -- Challenge 3: bags per stay
 --
--- Worksheet. Fill in each section in order. Answer each question in a comment
--- before moving on; the answers decide what goes into the final views.
--- Run the whole file:  .read sql/challenge3.sql
--- Run one query:       paste it at the duckdb prompt
---
--- The line below loads the views from sql/views.sql, including stay_bags and
--- bag_distribution from this challenge.
--- Creating views needs a session opened without -readonly.
+-- stay_bags and bag_distribution live in sql/views.sql.
+-- Creating tables needs a session opened without -readonly.
 .read sql/views.sql
 
 
@@ -17,9 +11,6 @@
 -- Q: How many stays received at least one platelet bag?
 -- A: 3705
 
-.print ''
-.print '=== Step 1: count what is there ==='
-.print '-- First 10 rows: bags per (stay, product)'
 -- Look at the first 10 rows: bags per (stay, product), one row per pair.
 select
     b.stay_id,
@@ -29,7 +20,6 @@ from bags as b
 group by b.stay_id, b.product
 limit 10;
 
-.print '-- Stays with at least one platelet bag'
 -- Same counts as a CTE, then count the platelet rows.
 -- Only stays with at least one bag appear here; stays with none are missing.
 with stays as (
@@ -56,14 +46,10 @@ where
 -- Q: How many ICU stays are there? How many rows does the full list have?
 -- A: 61165 icu stays, 183495 rows in the full list.
 
-.print ''
-.print '=== Step 2: the full list ==='
-.print '-- Number of ICU stays'
 -- how many distinct ICU stays?
 select count(distinct i.stay_id) as num_stays
 from icustays as i;
 
-.print '-- Saving stay_products (prints nothing on success)'
 -- one row for every ICU stay, paired with every product
 create or replace table stay_products as
 with stays as (
@@ -81,7 +67,6 @@ select
 from stays as s
 cross join product_types as p;
 
-.print '-- stay_products: total rows, distinct stays, distinct products'
 -- look at the table
 select
     count(*),
