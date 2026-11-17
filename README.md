@@ -1,5 +1,7 @@
 # Elston and Pickrel Revisited
 
+[![CI](https://github.com/jpb-1729/elston-pickrel-revisited/actions/workflows/ci.yml/badge.svg)](https://github.com/jpb-1729/elston-pickrel-revisited/actions/workflows/ci.yml)
+
 This project revisits Elston and Pickrel’s (1963) perishable inventory management policy for a hospital blood bank. Managing inventory in this environment is difficult: too little inventory risks shortages, and too much inventory risks waste from outdated supply. The authors use an order-up-to-S policy, where S is the target for stock on hand plus stock on order, combined with FIFO, and found that more complex rules did not perform much better. This repo goes one step further and demonstrates that, under the fitted demand model, this simple rule can incur only a few percent more expected loss than an optimized ordering policy, and examines the tradeoffs across stock levels S.
 
 ## Data
