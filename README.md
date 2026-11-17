@@ -1,6 +1,6 @@
 # Elston and Pickrel Revisited
 
-This project revisits Elston and Pickrel’s (1963) perishable inventory management policy for a hospital blood bank. Managing inventory in this environment is difficult: too little inventory risks shortages, and too much inventory risks waste from outdated supply. The authors use an order-up-to-S policy, where S is the target for stock on hand plus stock on order, combined with FIFO, and found that more complex rules did not perform much better. This repo goes one step further and demonstrates that this simple rule can be within a few percent of the true optimum and examines the tradeoffs across stock levels S.
+This project revisits Elston and Pickrel’s (1963) perishable inventory management policy for a hospital blood bank. Managing inventory in this environment is difficult: too little inventory risks shortages, and too much inventory risks waste from outdated supply. The authors use an order-up-to-S policy, where S is the target for stock on hand plus stock on order, combined with FIFO, and found that more complex rules did not perform much better. This repo goes one step further and demonstrates that, under the fitted demand model, this simple rule can incur only a few percent more expected loss than an optimized ordering policy, and examines the tradeoffs across stock levels S.
 
 ## Data
 
@@ -41,7 +41,7 @@ in `mimic_demo/` and run `tools/mimic_demo.sh`. Tests: `uv run pytest`.
 The results below come from one unseeded run of 50,000 patients. Each run draws
 new true parameters, so rerunning gives different numbers and overwrites the
 committed results. The conclusion holds: with `--seed 42`, order-up-to-S comes
-within 2.4% and 4.2% of the optimum.
+within 2.4% and 4.2% of the optimal expected loss under the fitted demand model.
 
 ## Evaluating the stocking policy
 
@@ -54,15 +54,19 @@ demand comes from the fitted Elston & Pickrel model.
 
 Platelets (about 1.7 bags a day) show the trade-off. Keeping days with any
 shortage to 5% takes S = 6. At that level 34% of bags expire with 3 usable days, and 14%
-with 5 usable days. At a 0.5% target, it's 53% and 31%. Red cells and frozen
-plasma never expire at these targets.
+with 5 usable days. At a 0.5% target, it's 53% and 31%. No red-cell or
+frozen-plasma expirations were observed at these targets during the
+200,000-day simulations.
 
-![Platelets: yearly loss for each stock level S, against the lowest loss any policy can reach](stocking/platelets_optimal.png)
+![Platelets: yearly loss for each stock level S, against the optimized policy under the fitted demand model](stocking/platelets_optimal.png)
 
-Order-up-to-S ignores the age of the stock. It was compared against an exact
-optimal policy that tracks the age of every bag, from a Markov decision process,
-with shortages and outdates weighted 25:4 as in Elston & Pickrel. At its best S,
-the simple rule comes within 1.9% (3 days) and 4.1% (5 days) of the optimum.
+Order-up-to-S ignores the age of the stock. It was compared against an ordering
+policy optimized using a Markov decision process that tracks inventory by age,
+with shortages and outdates weighted 25:4 as in Elston & Pickrel. Under the
+fitted demand model, the best order-up-to-S policy incurs only 1.9% and 4.1%
+more expected annual loss than the optimized ordering policy for three- and
+five-day usable lifetimes, respectively. Both policies assume independent
+daily demand and next-morning replenishment.
 
 ## Future work
 
