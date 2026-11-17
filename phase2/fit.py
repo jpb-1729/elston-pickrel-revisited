@@ -7,10 +7,15 @@ phase2/results.json.
 Run:    uv run python phase2/fit.py
 Check:  uv run python phase2/grade.py
 Needs phase2/episodes.csv and phase2/stay_bags.csv from sql/phase2.sql.
+
+To fit exports kept in another folder, name it: tools/mimic_demo.sh runs
+`phase2/fit.py mimic_demo/phase2` for the MIMIC-IV demo. The per-day numbers
+only mean something when the exports cover every patient in the window.
 """
 
 import json
 import math
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -167,9 +172,9 @@ def best_model(fitted):
     return max(fitted, key=lambda name: fitted[name][1])
 
 
-def main():
-    episodes = pd.read_csv(HERE / "episodes.csv")
-    stay_bags = pd.read_csv(HERE / "stay_bags.csv")
+def main(folder=HERE):
+    episodes = pd.read_csv(folder / "episodes.csv")
+    stay_bags = pd.read_csv(folder / "stay_bags.csv")
 
     results = {"window_days": WINDOW_DAYS}
     for product in PRODUCTS:
@@ -193,9 +198,9 @@ def main():
             "best_stay_model": best_model(stay_fitted),
         }
 
-    (HERE / "results.json").write_text(json.dumps(results, indent=2))
-    print("Wrote", HERE / "results.json")
+    (folder / "results.json").write_text(json.dumps(results, indent=2))
+    print("Wrote", folder / "results.json")
 
 
 if __name__ == "__main__":
-    main()
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else HERE)
