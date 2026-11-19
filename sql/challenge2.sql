@@ -1,77 +1,58 @@
 -- Challenge 2: turn records into bags
 --
--- Creating views needs a session opened without -readonly.
+-- inputevents has one row per record, and records are not bags. A bag is one
+-- unit of product hung and started for a patient:
+--   1. A bag counts once, however many records it was charted in.
+--   2. A bag counts even if it wasn't finished.
+--   3. A record replaced by a corrected record doesn't count; the correction
+--      does.
+--   4. Two identical records are one record charted twice; count it once.
+--   5. A bag counts once whatever unit its amount is recorded in.
+--
+-- The Result comments record an earlier synthetic run. Other runs give
+-- different counts, and the order IDs looked up below may not exist.
 .read sql/views.sql
 
 
 -- Step 1: narrow down ------------------------------------------------------
--- A "record" is one row of inputevents. Count the rows for each of your
--- three products: the result has three rows (platelets, rbc, plasma), each
--- with a count. inputevents has no product column, so join it to product_map
--- on itemid; the join also drops every item that isn't one of the three
--- (patterns 5, 7).
-
--- Q: How many records per product?
--- A:
--- SELECT
---     inputevents.*,
---     product_map.product
--- FROM inputevents
--- JOIN product_map
---     ON inputevents.itemid = product_map.itemid
--- this just appends column with product, not count
-
-SELECT
-    product_map.product,
-    COUNT(*) AS COUNT
-FROM inputevents
-JOIN product_map
-    ON inputevents.itemid = product_map.itemid
-GROUP BY product_map.product
-LIMIT 5;
-
--- Claude's version: same result, with a descriptive column name, stable
--- row order, and short table aliases (e = inputevents, m = product_map).
-SELECT
+-- Records per product. inputevents has no product column, so join it to
+-- product_map on itemid; the join also drops every item that isn't one of the
+-- three blood products.
+select
     m.product,
-    COUNT(*) AS n_records
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-GROUP BY m.product
-ORDER BY m.product;
+    count(*) as n_records
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+group by m.product
+order by m.product;
 
 -- Step 2: statuses -----------------------------------------------------------
--- Same as step 1, but count rows for each value of statusdescription
--- instead of each product. Then, for each status, look at ten whole rows
--- (select * ... where statusdescription = '...' limit 10) (patterns 3, 5).
-
--- Q: For each status: whole bag, part of a bag, or not a bag? Which rule says so?
--- A:
--- FinishedRunning: whole bag when orderid=linkorderid, part of a bag when orderid <> linkorderid
--- by rule bullet 1, this counts as a bag.
--- Paused: part of a bag. Every Paused bag also has a later FinishedRunning record
--- by rule bullet 1
--- Stopped: whole bag by rule bullet 2.
--- Rewritten: 2i shows just mistyped. by rule bullet 3 not a bag.
-
+-- Each statusdescription is a whole bag, part of a bag, or not a bag:
+--   FinishedRunning  a whole bag when orderid = linkorderid, otherwise the
+--                    last part of one (rule 1).
+--   Paused           part of a bag; every Paused bag has a later
+--                    FinishedRunning record (rule 1, 2j).
+--   Stopped          a whole bag, started and not finished (rule 2).
+--   Rewritten        not a bag: a mistyped copy of another record (rule 3,
+--                    2i).
 
 -- 2a. How many records does each status have? (blood products only)
 -- Result: 4 statuses. FinishedRunning = 35316, Paused = 3467,
 -- Rewritten = 1827, Stopped = 1936.
-SELECT
+select
     e.statusdescription,
-    COUNT(*) AS n_records
-FROM inputevents as e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-GROUP BY e.statusdescription;
+    count(*) as n_records
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+group by e.statusdescription;
 
 -- 2b. What do records of one status look like? Sample 10.
 -- Set the WHERE to one status at a time, so the sample isn't a mix.
 -- Columns to compare: amount vs totalamount (whole bag or part?),
 -- orderid vs linkorderid (first note of its order, or a later one?).
-SELECT
+select
     e.statusdescription,
     e.stay_id,
     m.product,
@@ -81,111 +62,111 @@ SELECT
     e.endtime,
     e.amount,
     e.totalamount
-FROM inputevents as e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription in ('FinishedRunning', 'Stopped', 'Rewritten', 'Paused')
-LIMIT 10;
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.statusdescription in ('FinishedRunning', 'Stopped', 'Rewritten', 'Paused')
+limit 10;
 
 -- 2c. Is every FinishedRunning record a whole bag? Count the ones whose
 -- amount differs from the bag size (amount <> totalamount).
 -- Result: 3453 of 35316 differ (about 1 in 10). The other 9 in 10 are
 -- whole bags in one record.
-SELECT
-    COUNT(*) AS n_records,
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription = 'FinishedRunning'
-    AND e.amount <> e.totalamount;
+select count(*) as n_records
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where
+    e.statusdescription = 'FinishedRunning'
+    and e.amount <> e.totalamount;
 
 -- 2d. Total FinishedRunning records, to put 2c's count in proportion.
 -- Result: 35316
-SELECT
-    COUNT(*) AS n_records,
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription = 'FinishedRunning';
+select count(*) as n_records
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.statusdescription = 'FinishedRunning';
 
 -- 2e. What are the 1 in 10 FinishedRunning records that aren't whole bags?
 -- Result: diff is large (not rounding), and orderid <> linkorderid every
 -- time, so each is a later record of an order that started earlier.
-SELECT
+select
     e.orderid,
     e.linkorderid,
     e.starttime,
     e.endtime,
     e.amount,
     e.totalamount,
-    e.totalamount - e.amount AS diff
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription = 'FinishedRunning'
-    AND e.amount <> e.totalamount
-LIMIT 10;
+    e.totalamount - e.amount as diff
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where
+    e.statusdescription = 'FinishedRunning'
+    and e.amount <> e.totalamount
+limit 10;
 
 -- 2f. Follow one order from 2e: every record sharing its linkorderid,
 -- in time order.
 -- Result: 2 records, Paused then FinishedRunning. Their amounts add up to
 -- about totalamount: one bag charted as two pieces.
-SELECT
+select
     e.orderid,
     e.linkorderid,
     e.starttime,
     e.endtime,
     e.amount,
     e.totalamount,
-    e.totalamount - e.amount AS diff,
+    e.totalamount - e.amount as diff,
     e.statusdescription
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.linkorderid = 10081336
-ORDER BY e.starttime;
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.linkorderid = 10081336
+order by e.starttime;
 
 -- 2g. What do Stopped records look like? Sample 10.
 -- Result: orderid = linkorderid every time (the first record of its order),
 -- and amount is less than totalamount: the bag was started and not finished.
-SELECT
+select
     e.orderid,
     e.linkorderid,
     e.starttime,
     e.endtime,
     e.amount,
     e.totalamount
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription = 'Stopped'
-ORDER BY e.orderid
-LIMIT 10;
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.statusdescription = 'Stopped'
+order by e.orderid
+limit 10;
 
 -- 2h. What do Rewritten records look like? Sample 10.
 -- Result: orderid <> linkorderid every time (never the first record of its
 -- order), and amount is far from totalamount, often many times bigger than
 -- the bag.
-SELECT
+select
     e.orderid,
     e.linkorderid,
     e.starttime,
     e.endtime,
     e.amount,
     e.totalamount
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.statusdescription = 'Rewritten'
-ORDER BY e.orderid
-LIMIT 10;
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.statusdescription = 'Rewritten'
+order by e.orderid
+limit 10;
 
 -- 2i. Follow one order from 2h: every record sharing its linkorderid,
 -- in time order.
 -- Result: 3 records. Paused 117.6, FinishedRunning 207.7, Rewritten 2077.0.
 -- The Rewritten record has the same starttime and endtime as the
 -- FinishedRunning one, with the amount mistyped (2077.0 for 207.7).
-SELECT
+select
     e.orderid,
     e.linkorderid,
     e.starttime,
@@ -194,11 +175,11 @@ SELECT
     e.totalamount,
     e.statusdescription,
     e.amountuom
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.linkorderid = 10000041
-ORDER BY e.starttime, e.orderid;
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.linkorderid = 10000041
+order by e.starttime, e.orderid;
 
 
 -- 2j. To prove that every Paused bag has a later FinishedRunning record, count
@@ -210,22 +191,20 @@ ORDER BY e.starttime, e.orderid;
 -- 4347 bags / 4387 records: the join drops every item that isn't one of
 -- the three blood products.
 
-SELECT COUNT(*)
-FROM (
-    SELECT DISTINCT
-        e.linkorderid
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription = 'Paused'
-) AS p
-WHERE p.linkorderid NOT IN (
-    SELECT DISTINCT
-        e.linkorderid
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription = 'FinishedRunning'
+select count(*)
+from (
+    select distinct e.linkorderid
+    from inputevents as e
+    join product_map as m
+        on e.itemid = m.itemid
+    where e.statusdescription = 'Paused'
+) as p
+where p.linkorderid not in (
+    select distinct e.linkorderid
+    from inputevents as e
+    join product_map as m
+        on e.itemid = m.itemid
+    where e.statusdescription = 'FinishedRunning'
 );
 
 -- 2k. Does a bag with a Stopped record have any other counted records?
@@ -234,195 +213,147 @@ WHERE p.linkorderid NOT IN (
 -- Without cleaning, 100 bags have extra rows: Rewritten records or exact
 -- duplicates. So the claim holds for counted records, not all raw rows.
 
-SELECT
+select
     e.linkorderid,
-    COUNT(*) AS n_records
-FROM (
+    count(*) as n_records
+from (
     -- DISTINCT removes exact copies of whole rows.
     -- <> means "not equal to": omit records replaced by a correction.
-    SELECT DISTINCT *
-    FROM inputevents
-    WHERE statusdescription <> 'Rewritten'
-) AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
+    select distinct *
+    from inputevents
+    where statusdescription <> 'Rewritten'
+) as e
+join product_map as m
+    on e.itemid = m.itemid
 -- The inner query lists blood-product bag IDs with a Stopped record.
 -- IN keeps every counted record for those bags, regardless of its status.
-WHERE e.linkorderid IN (
-    SELECT e.linkorderid
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription = 'Stopped'
-)
-GROUP BY e.linkorderid
+where
+    e.linkorderid in (
+        select e.linkorderid
+        from inputevents as e
+        join product_map as m
+            on e.itemid = m.itemid
+        where e.statusdescription = 'Stopped'
+    )
+group by e.linkorderid
 -- HAVING filters the groups after their records have been counted.
 -- No rows means no Stopped bag has more than one counted record.
-HAVING COUNT(*) > 1;
+having count(*) > 1;
 
 -- Step 3: repeats -------------------------------------------------------------
--- An exact copy is a row that matches another row in every column: same
--- orderid, same times, same amount, everything. Rule bullet 4 says such
--- copies count once, so we need to know how many there are.
+-- An exact copy matches another row in every column. Rule 4 counts copies
+-- once. The number of copies is all rows (3a) minus distinct rows (3b).
+-- DuckDB has no count(distinct *), so 3b counts a `select distinct *`
+-- derived table.
 --
--- Get two numbers, for blood-product rows only (keep the product_map join):
---   3a. all rows:        count(*) over inputevents joined to product_map.
---   3b. rows with copies removed: put `select distinct *` in a derived
---       table (as in 2k), then count(*) over that derived table. DuckDB
---       has no count(distinct *), so the derived table is the way.
--- The difference 3a - 3b is the number of copies (pattern 10). If it is 0,
--- there are none.
---
--- Note for 3b: the join can go inside the derived table or outside it.
--- Try both and check whether the count changes.
-
--- Q: Are there exact copies? How many?
--- A: all rows = 42546, distinct rows = 42243, copies = 303. Joining inside or
--- outside the derived table gives the same 42243: product_map adds one
--- column with one value per itemid, so it can't make two identical rows
--- differ or two different rows collide.
+-- Result: 42546 - 42243 = 303 copies. Joining product_map inside or outside
+-- the derived table gives the same 42243: it adds one column with one value
+-- per itemid, so it can't make two identical rows differ or two different
+-- rows collide.
 
 -- 3a. All blood-product rows.
 -- Result: 42546
-SELECT COUNT(*) AS n_rows
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid;
+select count(*) as n_rows
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid;
 
--- 3b. The same rows with exact copies removed. Start with the plain
--- `select distinct *` (commented out), then nest it in a derived table.
+-- 3b. The same rows with exact copies removed.
 -- Result: 42243
--- SELECT DISTINCT *
--- FROM inputevents AS e
--- JOIN product_map AS m
---     ON e.itemid = m.itemid;
-SELECT COUNT(*) AS n_rows
-FROM (
-    SELECT DISTINCT *
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-) AS d;
+select count(*) as n_rows
+from (
+    select distinct *
+    from inputevents as e
+    join product_map as m
+        on e.itemid = m.itemid
+) as d;
 
 -- Same count with the join outside the derived table.
 -- Result: 42243
-SELECT COUNT(*) AS n_rows
-FROM (
-    SELECT DISTINCT *
-    FROM inputevents
-) AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid;
+select count(*) as n_rows
+from (
+    select distinct *
+    from inputevents
+) as e
+join product_map as m
+    on e.itemid = m.itemid;
 
 -- Step 4: bag IDs --------------------------------------------------------------
--- Rule bullet 1 says a bag counts once however many records it has, so the
--- view needs a column that is the same for every record of one bag and
--- different between bags: that column becomes bag_id. Step 2 (2e, 2f, 2i)
--- already pointed at it; this step confirms the choice on more bags.
---
---   4a. Group the blood-product rows by your candidate column and count
---       rows per group. Keep only groups with more than one row
---       (group by ... having count(*) > 1). Order by the count, biggest
---       first, so the busiest bags are at the top. Two numbers to note:
---       how many bags have more than one record in total (the number of
---       rows this query returns), and how many records the busiest bag has.
---   4b. Pick one ID from 4a that you haven't looked at yet (not 10081336
---       or 10000041) and list all its rows: orderid, the candidate column,
---       statusdescription, starttime, endtime, amount, totalamount. Order
---       by starttime.
---
--- On track: most bags have one record and some have several. Ordered by
--- starttime, the records read like a story: started, paused, resumed,
--- finished or stopped. The first record's orderid equals the shared ID
--- (patterns 3, 5).
+-- Rule 1 needs a column shared by every record of one bag and different
+-- between bags. Steps 2e, 2f and 2i point to linkorderid, and this step
+-- confirms it: in time order, a bag's records show the amount given as it
+-- was started, paused and finished, and the first record's orderid equals
+-- the linkorderid.
 
--- Q: Which column is bag_id? What story do one bag's records tell?
--- A: The linkorderid column is the bag_id. records show amounts given over time.
+-- 4a. Bags with more than one record, busiest first.
+-- Result: 5168 bags have more than one record; the busiest have 4.
 
--- 4a.
--- there are 4 records in the busiest bags. There are 5168 bags with >1 records.
-
-SELECT
+select
     e.linkorderid,
-    COUNT(*) as count
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-GROUP BY e.linkorderid
-HAVING COUNT(*) > 1
-ORDER BY count DESC;
+    count(*) as count
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+group by e.linkorderid
+having count(*) > 1
+order by count desc;
 
--- 4b.
-SELECT
+-- 4b. All the records of one multi-record bag.
+select
     e.orderid,
     e.statusdescription,
     e.starttime,
     e.endtime,
     e.amount,
-    e.totalamount,
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.linkorderid = 10058651
-ORDER BY e.starttime;
+    e.totalamount
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.linkorderid = 10058651
+order by e.starttime;
 
 -- Step 5: units ---------------------------------------------------------------
--- Rule bullet 5 says a bag counts once whatever unit its amount is in. One
--- of your three items records amount in 'units' instead of 'ml'. Find it
--- and check whether its records behave like the others.
---
---   5a. Which itemid uses 'units'? Group the blood-product rows by itemid
---       and amountuom with a count. One item should show a different uom.
---   5b. For that item, over the records you decided to count in steps 2
---       and 3 (so: drop Rewritten, drop exact copies), get min(amount),
---       max(amount) and the list of distinct amounts with a count of each
---       (pattern 6). Compare with the ml items: hundreds of ml per bag.
---
--- On track: the amounts are small whole numbers. Ask what one 'unit' is for
--- this product, and whether a record saying amount = 2 is one bag or two.
--- Whatever you decide here, bag_id still decides how many rows the view has.
-
--- Q: What does one record's amount count? Is a record still one bag?
--- A: The amount counts pooled donors. A record is still one bag.
+-- One item records amount in 'units' instead of ml (rule 5). Its amounts
+-- count the donors pooled into the bag, so a record is still one bag, and
+-- bag_id still decides how many rows the view has.
 
 -- 5a. Which itemid uses 'units'?
 -- Three queries, from simplest to most informative.
 
 -- 5a-i. What values does amountuom take at all?
 -- Result: two values, 'ml' and 'units' (varchar).
-SELECT DISTINCT
-    e.amountuom
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid;
+select distinct e.amountuom
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid;
 
 -- 5a-ii. Which item carries 'units'? Filter to that value and list the items.
 -- Result: one item, 990102 (platelets, "Pooled platelet product recorded
 -- in units").
-SELECT DISTINCT
+select distinct
     e.itemid,
     m.product,
     m.note
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.amountuom = 'units';
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.amountuom = 'units';
 
 -- 5a-iii. Same answer in one query: one row per (itemid, amountuom) pair
 -- with a record count. Each item appears exactly once, so no item mixes
 -- units: 990102 is all 'units' (1398 records); the other four are all 'ml'.
 -- m.product is in the GROUP BY because it is in the SELECT; each itemid has
 -- one product so the groups are unchanged.
-SELECT
+select
     e.itemid,
     m.product,
     e.amountuom,
-    COUNT(*) AS n_records
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-GROUP BY e.itemid, m.product, e.amountuom
-ORDER BY e.itemid;
+    count(*) as n_records
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+group by e.itemid, m.product, e.amountuom
+order by e.itemid;
 
 
 -- 5b. What amounts does 990102 record? Four queries: the first two read
@@ -431,143 +362,76 @@ ORDER BY e.itemid;
 
 -- 5b-i. Range of amounts, before filtering.
 -- Result: min 0.4, max 60.0.
-SELECT
-    MIN(e.amount),
-    MAX(e.amount)
-FROM inputevents AS e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-WHERE e.itemid = 990102;
+select
+    min(e.amount),
+    max(e.amount)
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+where e.itemid = 990102;
 
 -- 5b-ii. Distinct amounts with a count, before filtering (1398 records).
 -- Result: 12 values. 0.4 (9), 0.5 (15), 0.6 (9), 4 (291), 5 (515),
 -- 6 (527), 8 (7), 10 (6), 12 (6), 40 (1), 50 (7), 60 (5).
-SELECT
+select
     e.amount,
-    COUNT(*)
-FROM inputevents as e
-JOIN product_map AS m
-    ON e.itemid = m.itemid
-GROUP BY e.amount, e.itemid
-HAVING e.itemid = 990102;
+    count(*)
+from inputevents as e
+join product_map as m
+    on e.itemid = m.itemid
+group by e.amount, e.itemid
+having e.itemid = 990102;
 
 -- 5b-iii. Range of amounts, counted records only.
 -- Result: min 4.0, max 6.0.
-SELECT
-    MIN(e.amount),
-    MAX(e.amount)
-FROM(
-SELECT DISTINCT *
-FROM inputevents AS e
-WHERE e.statusdescription <> 'Rewritten'
+select
+    min(e.amount),
+    max(e.amount)
+from (
+    select distinct *
+    from inputevents as e
+    where e.statusdescription <> 'Rewritten'
 ) as e
-WHERE e.itemid = 990102;
+where e.itemid = 990102;
 
 -- 5b-iv. Distinct amounts with a count, counted records only (1321 records).
 -- Result: 3 values. 4 (287), 5 (511), 6 (523). Every other value in 5b-ii
 -- came from a Rewritten record: the decimal point slipped one place
 -- (0.5, 50) or the value doubled (8, 10, 12).
-SELECT
+select
     e.amount,
-    COUNT(*)
-FROM(
-    SELECT DISTINCT *
-    FROM inputevents AS e
-    WHERE e.statusdescription <> 'Rewritten'
-        AND e.itemid = 990102
-) AS e
-GROUP BY e.amount, e.itemid; 
+    count(*)
+from (
+    select distinct *
+    from inputevents as e
+    where
+        e.statusdescription <> 'Rewritten'
+        and e.itemid = 990102
+) as e
+group by e.amount, e.itemid;
 
 -- Step 6: build bags ------------------------------------------------------------
--- Write the view with a CTE (`with ... as (...)`) in two parts
--- (patterns 11, 14):
---
---   first  `counted`: the blood-product rows that count, applying your
---          answers from steps 2 to 4 as filters: the product_map join,
---          a WHERE on statusdescription, and `select distinct` for copies.
---          Run this part on its own first and check it two ways:
---            - select statusdescription, count(*) from counted group by all:
---              only the statuses you decided to keep appear.
---            - count(*) of counted equals count(*) of select distinct *
---              from counted (no copies left).
---   then   `bags`: group `counted` by the bag ID so there is one row per
---          bag, and build each output column from the group:
---            bag_id      the grouping column
---            stay_id, product, itemid, amountuom
---                        same for every record of a bag, so group by them
---                        too (or take min/max, either works)
---            starttime   earliest start in the bag
---            endtime     latest end in the bag
---            n_records   how many counted records the bag has
---            amount      total given across the bag's records
---
--- Develop it as a plain SELECT, and only once Step 7 passes wrap it in
--- `create or replace view bags as ...`. That needs a session opened
--- without -readonly.
+-- The bags view lives in sql/views.sql. A CTE named counted keeps the records
+-- that count (blood products only, no Rewritten, no exact copies), and the
+-- outer query groups them by linkorderid, one row per bag:
+--   bag_id      linkorderid
+--   stay_id, product, itemid, amountuom
+--               the same for every record of a bag, so grouping by them
+--               doesn't split any bag
+--   starttime   earliest start in the bag
+--   endtime     latest end in the bag
+--   n_records   how many counted records the bag has
+--   amount      total given across the bag's records
 
--- 6a. One row per bag. `counted` keeps the records that count (blood
--- products only, no Rewritten, no exact copies); the outer query groups
--- them by linkorderid. stay_id, product, itemid and amountuom are the same
--- for every record of a bag, so grouping by them doesn't split any bag.
--- Result: 36,993 bags. LIMIT 10 is only for the preview; leave it out of
--- the view.
-CREATE OR REPLACE VIEW bags AS
-WITH counted AS (
-    SELECT DISTINCT e.*, m.product
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription <> 'Rewritten'
-)
-SELECT
-    c.linkorderid AS bag_id,
-    c.stay_id,
-    c.product,
-    c.itemid,
-    c.amountuom,
-    MIN(c.starttime) AS starttime,
-    MAX(c.endtime) AS endtime,
-    COUNT(*) AS n_records,
-    SUM(c.amount) AS amount
-FROM counted AS c
-GROUP BY c.linkorderid, c.stay_id, c.product, c.itemid, c.amountuom
-ORDER BY bag_id;
 
--- Step 7: check before grading ------------------------------------------------
--- Count the rows of bags, and count the distinct bag_id values: they must be
--- equal. Then, for each itemid, look at the smallest and largest n_records
--- and amount: do they look sensible?
---
--- The view doesn't exist yet, so each check repeats the 6a query as a second
--- CTE named `bags` and reads from that.
+-- Step 7: check the view ---------------------------------------------------------
 
 -- 7a. One row per bag?
 -- Result: 36,993 rows, 36,993 distinct bag_ids. Equal, so no bag is split.
-WITH counted AS (
-    SELECT DISTINCT e.*, m.product
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription <> 'Rewritten'
-),
-bags AS (
-    SELECT
-        c.linkorderid AS bag_id,
-        c.stay_id,
-        c.product,
-        c.itemid,
-        c.amountuom,
-        MIN(c.starttime) AS starttime,
-        MAX(c.endtime) AS endtime,
-        COUNT(*) AS n_records,
-        SUM(c.amount) AS amount
-    FROM counted AS c
-    GROUP BY c.linkorderid, c.stay_id, c.product, c.itemid, c.amountuom
-)
-SELECT
-    COUNT(*) AS n_bags,
-    COUNT(DISTINCT b.bag_id) AS n_distinct_bags
-FROM bags AS b;
+select
+    count(*) as n_bags,
+    count(distinct b.bag_id) as n_distinct_bags
+from bags as b;
 
 -- 7b. Records and amounts per item.
 -- Result:
@@ -581,36 +445,15 @@ FROM bags AS b;
 -- Rewritten) slipped into counted. 990102 is never paused (always 1 record),
 -- which fits its amount being a count of pooled donors that can't be split
 -- across records. The ml ranges are realistic bag volumes, with nothing near
--- double a bag. 990102 stays at 4-6 donor units, as in 5b-iv. Step 7 passes.
-WITH counted AS (
-    SELECT DISTINCT e.*, m.product
-    FROM inputevents AS e
-    JOIN product_map AS m
-        ON e.itemid = m.itemid
-    WHERE e.statusdescription <> 'Rewritten'
-),
-bags AS (
-    SELECT
-        c.linkorderid AS bag_id,
-        c.stay_id,
-        c.product,
-        c.itemid,
-        c.amountuom,
-        MIN(c.starttime) AS starttime,
-        MAX(c.endtime) AS endtime,
-        COUNT(*) AS n_records,
-        SUM(c.amount) AS amount
-    FROM counted AS c
-    GROUP BY c.linkorderid, c.stay_id, c.product, c.itemid, c.amountuom
-)
-SELECT
+-- double a bag. 990102 stays at 4-6 donor units, as in 5b-iv.
+select
     b.itemid,
     b.amountuom,
-    COUNT(*) AS n_bags,
-    MIN(b.n_records) AS min_records,
-    MAX(b.n_records) AS max_records,
-    MIN(b.amount) AS min_amount,
-    MAX(b.amount) AS max_amount
-FROM bags AS b
-GROUP BY b.itemid, b.amountuom
-ORDER BY b.itemid;
+    count(*) as n_bags,
+    min(b.n_records) as min_records,
+    max(b.n_records) as max_records,
+    min(b.amount) as min_amount,
+    max(b.amount) as max_amount
+from bags as b
+group by b.itemid, b.amountuom
+order by b.itemid;

@@ -2,17 +2,17 @@
 --
 -- Model fitting and grading are in phase2/fit.py and phase2/grade.py.
 -- Creating views and exporting files needs a session opened without -readonly.
+-- The Result comments record one synthetic run; other runs, and the MIMIC-IV
+-- demo, give different numbers.
 .read sql/views.sql
 
 
 -- Step 1: gaps between bags ---------------------------------------------------
 -- For each stay and product, in time order, how long after the previous bag
--- ended did this bag start? Count the gaps in whole hours (pattern 15).
-
--- Q: Where is the empty stretch in the gaps? What gap will you use to split
---    one episode from the next?
--- A: The empty stretch in the gaps is 3 to 11 hours depending on definition of empty.
--- use halfway point as split point, which is 7.
+-- ended did this bag start? Count the gaps in whole hours.
+-- Result: the counts are nearly empty from 3 to 11 hours, depending on what
+-- counts as empty. A gap of more than 7 hours, about halfway, starts a new
+-- episode.
 with bags_with_prev_end as (
     select
         b.stay_id,
@@ -49,24 +49,16 @@ from piles;
 
 -- Step 2: build the episodes ---------------------------------------------------
 -- Flag each bag that starts a new episode, number the episodes, then make one
--- row per episode (patterns 11, 15). Develop it as a plain SELECT, then wrap
--- it in `create or replace view episodes as ...`.
+-- row per episode.
 -- Columns: stay_id, product, episode_no, episode_start, n_bags
-
--- Q: For each product, how many distinct stays, episodes and bags are there?
---    Every episode has at least one bag, and every stay that received the
---    product has at least one episode. So does stays <= episodes <= bags hold
---    for every product?
--- A:
--- ───────────┬─────────┬────────────┬────────┐
--- │  product  │ n_stays │ n_episodes │ n_bags │
--- │  varchar  │  int64  │   int64    │ int128 │
--- ├───────────┼─────────┼────────────┼────────┤
--- │ plasma    │    6554 │       6635 │  10095 │
--- │ platelets │    3705 │       4484 │   7306 │
--- │ rbc       │   11972 │      12402 │  19957 │
--- └───────────┴─────────┴────────────┴────────┘
--- the inequality holds/
+--
+-- Every episode has at least one bag, and every stay that received the
+-- product has at least one episode, so stays <= episodes <= bags must hold.
+-- Result: it holds for every product.
+--   product    n_stays  n_episodes  n_bags
+--   plasma        6554        6635   10095
+--   platelets     3705        4484    7306
+--   rbc          11972       12402   19957
 create or replace view episodes as
 with bags_with_prev_end as (
     select
@@ -125,13 +117,9 @@ group by product
 order by product;
 
 -- Step 3: check the episodes ----------------------------------------------------
--- Do the episodes' n_bags add up to the number of bags, per product? Is any
--- n_bags below 1? Print true/false.
-
--- Q: For each product, does the total of n_bags across episodes equal the
---    number of bags? Does every episode have an n_bags of at least 1? Report
---    both checks as true or false.
--- A: yes, equality holds. Every episode has n_bags=>1.
+-- Per product, the episodes' n_bags should add up to the number of bags, and
+-- no episode should have n_bags below 1.
+-- Result: both hold.
 select
     product,
     sum(n_bags) as n_bags
@@ -144,19 +132,15 @@ select
 from bags
 group by product;
 
--- note that `summarize episodes;` in cli answers if any n_bags<1 and min=1.
+-- `summarize episodes;` shows the minimum n_bags, which is 1.
 
 -- Step 4: episodes per day, first attempt ---------------------------------------
 -- Count episodes per product per calendar day of episode_start. Fill in days
--- with no episodes as 0, from the first date in the data to the last
--- (pattern 12). Then take the mean per product.
-
--- Q: From the first date to the last, how many days does your calendar span,
---    and how many years is that? Is that a believable length of time for one
---    hospital's records? What mean episodes per day did you get per product?
--- A: 30149 days, about 82.5 years. Not believable: the shifted dates spread
---    across the 2110s to 2190s. Mean per day: plasma 0.22, platelets 0.15,
---    rbc 0.41.
+-- with no episodes as 0, from the first date in the data to the last. Then
+-- take the mean per product.
+-- Result: 30149 days, about 82.5 years, which can't be one hospital's
+-- records: the shifted dates spread across the 2110s to 2190s. Mean per day:
+-- plasma 0.22, platelets 0.15, rbc 0.41.
 with counts as (
     select
         product,
@@ -202,13 +186,10 @@ group by product
 order by product;
 
 -- Step 5: what a day means ------------------------------------------------------
--- Reread the field guide's notes on dates, and look at patients.anchor_year_group.
--- Work out how many real days the data covers, then compute episodes per day.
-
--- Q: How many real days does the data cover, and how did you work that out?
---    Can the mean from step 4 be used as episodes per day? Explain why or why
---    not. What episodes per day do you get per product using the real days?
--- A: 4383 real days (2008-01-01 to 2019-12-31, exactly 12 years). The four
+-- Each patient's dates are shifted into the future by a different amount.
+-- patients.anchor_year_group gives the real years, so it gives the real
+-- length of time the data covers.
+-- Result: 4383 real days (2008-01-01 to 2019-12-31, exactly 12 years). The four
 --    anchor_year_group ranges sit side by side with no gaps or overlaps.
 --    Step 4's mean can't be used: each patient's dates are shifted by a
 --    different number of years, so the calendar from first to last shifted
@@ -242,15 +223,11 @@ order by product;
 
 -- Step 6: what survives ---------------------------------------------------------
 -- Count episodes per product per day of the week, with dayname(episode_start).
-
--- Q: For each product, do all seven days of the week have about the same number
---    of episodes? If not, which days stand out? Why can you trust the day of
---    the week here when you couldn't trust the calendar in step 4?
--- A: No. Weekends are low for all three: Saturday about 10% and Sunday about
---    15-20% below the weekday average. Weekdays are within about 5% of each
---    other. The date shift changes each patient's year but keeps the real day
---    of the week, so weekday counts survive it. Step 4's calendar length
---    doesn't.
+-- Result: weekends are low for all three products: Saturday about 10% and
+-- Sunday about 15-20% below the weekday average. Weekdays are within about 5%
+-- of each other. The synthetic date shifts keep the real day of the week, so
+-- weekday counts survive them. MIMIC-IV's shifts don't, so on real data this
+-- step can't measure a weekday effect.
 
 select
     product,
@@ -262,14 +239,11 @@ order by product, isodow(episode_start);
 
 -- Step 7: per stay --------------------------------------------------------------
 -- From stay_bags, per product: the share of stays with at least one bag, and
--- the mean and var_samp of n_bags among those stays only (patterns 5, 6).
-
--- Q: Which product or products do most stays never receive, meaning fewer than
---    half of stays have at least one bag? Among stays with at least one bag,
---    is the variance of n_bags above the mean for each product?
--- A: All three (share_any: plasma 0.11, platelets 0.06, rbc 0.20).
---    Variance above mean only for platelets (var/mean: plasma 0.69,
---    platelets 1.94, rbc 0.82).
+-- the mean and var_samp of n_bags among those stays only.
+-- Result: most stays never receive any of the three products (share_any:
+-- plasma 0.11, platelets 0.06, rbc 0.20). Among stays with at least one bag,
+-- the variance is above the mean only for platelets (var/mean: plasma 0.69,
+-- platelets 1.94, rbc 0.82).
 
 select
     product,

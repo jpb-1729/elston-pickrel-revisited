@@ -2,14 +2,15 @@
 --
 -- stay_bags and bag_distribution live in sql/views.sql.
 -- Creating tables needs a session opened without -readonly.
+-- The Result comments record one synthetic run; other runs give different
+-- numbers.
 .read sql/views.sql
 
 
 -- Step 1: count what's there ------------------------------------------------
--- From bags, count bags for each stay and product (pattern 5).
-
--- Q: How many stays received at least one platelet bag?
--- A: 3705
+-- Bags for each stay and product, and the number of stays that received at
+-- least one platelet bag.
+-- Result: 3705 stays received platelets.
 
 -- Look at the first 10 rows: bags per (stay, product), one row per pair.
 select
@@ -40,11 +41,8 @@ where
 
 
 -- Step 2: the full list ------------------------------------------------------
--- Count the ICU stays. Then build every stay paired with every product:
--- three rows per stay (patterns 9, 12).
-
--- Q: How many ICU stays are there? How many rows does the full list have?
--- A: 61165 icu stays, 183495 rows in the full list.
+-- Every ICU stay paired with every product: three rows per stay.
+-- Result: 61165 ICU stays, 183495 rows in the full list.
 
 -- how many distinct ICU stays?
 select count(distinct i.stay_id) as num_stays
@@ -76,40 +74,10 @@ from stay_products as s;
 
 
 -- Step 3: fill in the zeros --------------------------------------------------
--- Attach your counts from step 1 to the full list from step 2, so stays with
--- no bags show 0, never null (pattern 12).
-
--- Q: How many rows have n_bags = 0? Does step 1's count plus this add up?
--- A: 161264, which adds up to step 1 count when adding nonzero rows.
-
--- WITH stays AS (
---     SELECT DISTINCT
---         i.stay_id
---     FROM icustays as i
--- ),
--- product_types as (
---     SELECT DISTINCT product from product_map
--- ),
--- bag_counts as (
---     SELECT
---         b.stay_id,
---         b.product,
---         COUNT(b.bag_id) as n_bags
---     FROM bags as b
---     GROUP BY b.stay_id, b.product
--- )
--- SELECT
---     s.stay_id,
---     p.product,
---     COALESCE(b.n_bags, 0) as n_bags
--- FROM stays as s
--- CROSS JOIN product_types as p
--- LEFT JOIN bag_counts as b
---     ON b.stay_id = s.stay_id
---     AND b.product = p.product;
-
--- above approach matches pattern 12 closely but does not use stay_products. hard to read.
-
+-- Attach the counts from step 1 to the full list from step 2, so stays with
+-- no bags show 0, never null.
+-- Result: 161264 zero rows. The nonzero rows equal step 1's row count, and
+-- the two add up to the full list.
 with bag_counts as (
     select
         b.stay_id,
@@ -139,84 +107,66 @@ select
 from filled as f;
 
 -- Step 4: first bag -----------------------------------------------------------
--- Add first_bag_start: the starttime of the stay's first bag of that
--- product, and null when there are no bags (patterns 6, 12).
---
--- Develop it as a plain SELECT, and only once step 5 passes wrap it in
--- `create or replace view stay_bags as ...`.
+-- The stay_bags view in sql/views.sql adds first_bag_start: the starttime of
+-- the stay's first bag of that product, and null when n_bags = 0.
 -- Columns: stay_id, product, n_bags, first_bag_start
 
--- Q: For a stay with n_bags = 0, what is first_bag_start? With n_bags > 0?
--- A: with n_bags=0 first_bag_start in NULL, and with n_bags>0 its the MIN(starttime)
--- The stay_bags view now lives in sql/views.sql.
-
 -- Step 5: check the shape -----------------------------------------------------
--- Run the "Shape" grading query from EXERCISE.md. rows must equal
--- expected_rows; duplicate_rows and null_counts must be 0.
-
--- Result: it's correct.
+-- One row per stay and product, no duplicates, and no null n_bags.
+-- Result: 183495 rows as expected, 0 duplicates, 0 null n_bags.
+select
+    count(*) as n_rows,
+    3 * (select count(distinct stay_id) from icustays) as expected_rows,
+    count(*) - count(distinct s.stay_id || '|' || s.product) as duplicate_rows,
+    count(*) filter (where s.n_bags is null) as null_n_bags
+from stay_bags as s;
 
 
 -- Step 6: summarise -----------------------------------------------------------
--- From stay_bags, count stays for each product and n_bags, then add share:
--- n_stays as a fraction of all ICU stays, rounded to 4 decimals
--- (patterns 5, 13).
---
--- Wrap it in `create or replace view bag_distribution as ...` once step 7
--- passes.
+-- The bag_distribution view in sql/views.sql counts stays for each product
+-- and n_bags, with share: n_stays as a fraction of all ICU stays, rounded to
+-- 4 decimals.
 -- Columns: product, n_bags, n_stays, share
-
--- The bag_distribution view now lives in sql/views.sql.
 
 
 -- Step 7: check the shares ----------------------------------------------------
--- For each product, add up share (and n_stays) (pattern 5).
+-- Result: share adds to 1 for each product, within 0.0001 of rounding, and
+-- n_stays adds to the 61165 ICU stays from step 2.
+select
+    b.product,
+    sum(b.share) as total_share,
+    sum(b.n_stays) as total_stays
+from bag_distribution as b
+group by b.product
+order by b.product;
 
--- Q: Does share add to 1 for each product? Does n_stays add to the number of
---    ICU stays from step 2?
--- A:
-
-
--- Step 8: answer the questions -----------------------------------------------
--- Answer each with a query on stay_bags or bag_distribution, not by eye.
--- Put the query under its question and the answer in the comment.
+-- Step 8: questions -----------------------------------------------------------
 
 -- Q1: What share of ICU stays received no platelets? No red cells? No plasma?
--- A:
+-- A: platelets 0.9394, red cells 0.8043, plasma 0.8928.
 
 select
     b.product,
     b.n_stays,
     b.share
 from bag_distribution as b
-where b.n_bags == 0;
+where b.n_bags = 0;
 
 -- Q2: Of the stays that received platelets, what share received exactly one
 --     bag?
--- A:
-
-select b.n_stays
-from bag_distribution as b
-where b.product = 'platelets' and b.n_bags = 1;
-
--- above is n_stays for 1 bag
-select sum(b.n_stays)
-from bag_distribution as b
-where b.product = 'platelets' and b.n_bags > 0;
-
--- use filters since AND logic in first select makes WHERE inapplicable
-
+-- A: 2177 of 3705, or 0.59. The numerator and denominator need different
+--    conditions on n_bags, so each takes a filter instead of a shared WHERE.
 select
     sum(b.n_stays) filter (where b.n_bags = 1) as numerator,
     sum(b.n_stays) filter (where b.n_bags > 0) as denominator,
     sum(b.n_stays) filter (where b.n_bags = 1)
-    / sum(b.n_stays) filter (where b.n_bags > 0)
+    / sum(b.n_stays) filter (where b.n_bags > 0) as share_one_bag
 from bag_distribution as b
 where b.product = 'platelets';
 
 -- Q3: What is the most platelet bags any single stay received, and how many
 --     stays received 10 or more?
--- A:
+-- A: 33 bags; 44 stays received 10 or more.
 
 select *
 from bag_distribution as b
@@ -231,7 +181,7 @@ where b.n_bags >= 10 and b.product = 'platelets';
 
 -- Q4: Compare the three products: which one has the most stays with large
 --     counts (5 or more bags)?
--- A:
+-- A: red cells, with 451 stays (platelets 261, plasma 177).
 
 select
     b.product,

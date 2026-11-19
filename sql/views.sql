@@ -1,8 +1,7 @@
--- Views shared by the challenges. Load them at the top of any file or
--- session, from the project root:
+-- Views shared by the worksheets and the pipeline. Load them at the top of any
+-- file or session, from the project root:
 --   .read sql/views.sql
--- Add each challenge's view here once it passes grading. Order matters:
--- a view must come after any view it uses.
+-- Order matters: a view must come after any view it uses.
 
 
 -- Challenge 1: the item IDs of the three blood products
