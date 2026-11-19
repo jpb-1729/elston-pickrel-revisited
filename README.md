@@ -2,14 +2,22 @@
 
 [![CI](https://github.com/jpb-1729/elston-pickrel-revisited/actions/workflows/ci.yml/badge.svg)](https://github.com/jpb-1729/elston-pickrel-revisited/actions/workflows/ci.yml)
 
-This project revisits Elston and Pickrel’s (1963) perishable inventory management policy for a hospital blood bank. Managing inventory in this environment is difficult: too little inventory risks shortages, and too much inventory risks waste from outdated supply. The authors use an order-up-to-S policy, where S is the target for stock on hand plus stock on order, combined with FIFO, and found that more complex rules did not perform much better. This repo goes one step further and demonstrates that, under the fitted demand model, this simple rule can incur only a few percent more expected loss than an optimized ordering policy, and examines the tradeoffs across stock levels S.
+This project revisits Elston and Pickrel’s (1963) perishable inventory
+management policy for a hospital blood bank. Managing inventory in this
+environment is difficult: too little inventory risks shortages, and too much
+inventory risks waste from outdated supply. The authors use an order-up-to-S
+policy, where S is the target for stock on hand plus stock on order, combined
+with FIFO, and found that more complex rules did not perform much better. This
+repo goes one step further and demonstrates that, under the fitted demand
+model, this simple rule can incur only a few percent more expected loss than an
+optimized ordering policy, and examines the trade-offs across stock levels S.
 
 ## Data
 
 The full MIMIC-IV database needs credentialed access, so the main results use
 synthetic data built to look like it. `generate_synthetic_mimic.py` writes the
 five MIMIC-IV tables the analysis needs, with the same columns. Demand mostly
-follows the Elston & Pickrel model, with deliberate departures: patient
+follows the Elston and Pickrel model, with deliberate departures: patient
 frailty, repeat episodes, weekday effects, drift over time and a heavy tail.
 The data also has the recording problems of real ICU records: bags split across
 rows, corrected rows, duplicates, one item recorded in donor units, and
@@ -19,7 +27,7 @@ data. The true parameters go to a sealed answer key, so
 `phase2/grade.py` can check the fitted model against them. The same SQL runs on
 the open MIMIC-IV demo with only the item IDs changed.
 
-## Getting Started
+## Getting started
 
 Needs [uv](https://docs.astral.sh/uv/) and the
 [DuckDB command-line client](https://duckdb.org/docs/installation/). From the
@@ -30,10 +38,10 @@ uv sync
 uv run python generate_synthetic_mimic.py --out synth --seed 42
 (cd synth && duckdb synth.duckdb < load_duckdb.sql)
 
-duckdb synth/synth.duckdb < sql/phase2.sql   # bags → episodes, exports to phase2/
-uv run python phase2/fit.py                  # fits the demand models
-uv run python stocking/run.py                # shortage vs. outdating for each S
-uv run python stocking/optimal.py            # order-up-to-S vs. the optimal policy
+duckdb synth/synth.duckdb < sql/phase2.sql > /dev/null  # bags → episodes, exports to phase2/
+uv run python phase2/fit.py                              # fits the demand models
+uv run python stocking/run.py                            # shortage vs. outdating for each S
+uv run python stocking/optimal.py                        # order-up-to-S vs. the optimal policy
 ```
 
 To run the pipeline on real data, put the `hosp/` and `icu/` folders of the
@@ -50,21 +58,21 @@ within 2.4% and 4.2% of the optimal expected loss under the fitted demand model.
 Each evening the blood bank orders enough to bring stock on hand plus stock on
 order back up to S bags.
 Bags are issued oldest first and expire when their shelf life runs out. Daily
-demand comes from the fitted Elston & Pickrel model.
+demand comes from the fitted Elston and Pickrel model.
 
 ![Platelets: days with a shortage against bags outdated, for each stock level S](stocking/platelets_tradeoff.png)
 
 Platelets (about 1.7 bags a day) show the trade-off. Keeping days with any
-shortage to 5% takes S = 6. At that level 34% of bags expire with 3 usable days, and 14%
-with 5 usable days. At a 0.5% target, it's 53% and 31%. No red-cell or
-frozen-plasma expirations were observed at these targets during the
-200,000-day simulations.
+shortage to 5% takes S = 6. At that level 34% of bags expire with 3 usable
+days, and 14% with 5 usable days. At a 0.5% target, it's 53% and 31%. No
+red-cell or frozen-plasma expirations were observed at these targets during
+the 200,000-day simulations.
 
 ![Platelets: yearly loss for each stock level S, against the optimized policy under the fitted demand model](stocking/platelets_optimal.png)
 
 Order-up-to-S ignores the age of the stock. It was compared against an ordering
 policy optimized using a Markov decision process that tracks inventory by age,
-with shortages and outdates weighted 25:4 as in Elston & Pickrel. Under the
+with shortages and outdates weighted 25:4 as in Elston and Pickrel. Under the
 fitted demand model, the best order-up-to-S policy incurs only 1.9% and 4.1%
 more expected annual loss than the optimized ordering policy for three- and
 five-day usable lifetimes, respectively. Both policies assume independent
@@ -101,15 +109,18 @@ Elston, R. C., & Pickrel, J. C. (1963). A statistical approach to ordering and
 usage policies for a hospital blood bank. *Transfusion*, 3(1), 41–47.
 https://doi.org/10.1111/j.1537-2995.1963.tb04602.x
 
-Johnson, A. E. W., Bulgarelli, L., Shen, L., et al. (2023). MIMIC-IV, a freely
-accessible electronic health record dataset. *Scientific Data*, 10, 1.
+Johnson, A. E. W., Bulgarelli, L., Shen, L., Gayles, A., Shammout, A., Horng,
+S., Pollard, T. J., Hao, S., Moody, B., Gow, B., Lehman, L. H., Celi, L. A., &
+Mark, R. G. (2023). MIMIC-IV, a freely accessible electronic health record
+dataset. *Scientific Data*, 10, 1.
 https://doi.org/10.1038/s41597-022-01899-x
 
 Johnson, A., Bulgarelli, L., Pollard, T., Horng, S., Celi, L. A., & Mark, R.
 (2023). MIMIC-IV Clinical Database Demo (version 2.2). PhysioNet.
 https://doi.org/10.13026/dp1f-ex47
 
-Goldberger, A. L., Amaral, L. A. N., Glass, L., et al. (2000). PhysioBank,
-PhysioToolkit, and PhysioNet: Components of a new research resource for complex
-physiologic signals. *Circulation*, 101(23), e215–e220.
+Goldberger, A. L., Amaral, L. A. N., Glass, L., Hausdorff, J. M., Ivanov, P.
+C., Mark, R. G., Mietus, J. E., Moody, G. B., Peng, C.-K., & Stanley, H. E.
+(2000). PhysioBank, PhysioToolkit, and PhysioNet: Components of a new research
+resource for complex physiologic signals. *Circulation*, 101(23), e215–e220.
 https://doi.org/10.1161/01.CIR.101.23.e215
