@@ -4,7 +4,7 @@
 -- Order matters: a view must come after any view it uses.
 
 
--- Challenge 1: the item IDs of the three blood products
+-- The item IDs of the three blood products (sql/01_product_map.sql).
 create or replace view product_map as
 select
     m.itemid,
@@ -27,8 +27,9 @@ join (
 ) as e on e.itemid = m.itemid;
 
 
--- Challenge 2: one row per bag. Keeps the blood-product records that count
--- (no Rewritten records, no exact copies) and groups them by linkorderid.
+-- One row per bag (sql/02_bags.sql). Keeps the blood-product records that
+-- count (no Rewritten records, no exact copies) and groups them by
+-- linkorderid.
 -- amount is in amountuom: ml for most items, donor units for 990102.
 create or replace view bags as
 with counted as (
@@ -55,7 +56,8 @@ from counted as c
 group by c.linkorderid, c.stay_id, c.product, c.itemid, c.amountuom;
 
 
--- Challenge 3: bag count and first bag time for every stay and product.
+-- Bag count and first bag time for every stay and product
+-- (sql/03_stay_bags.sql).
 -- Stays with no bags of a product get n_bags = 0 and a null first_bag_start.
 create or replace view stay_bags as
 with stay_products as (
@@ -87,8 +89,8 @@ left join bag_counts as b
     and b.product = s.product;
 
 
--- Challenge 3: how many stays got each bag count, per product. share is
--- n_stays as a fraction of all ICU stays.
+-- How many stays got each bag count, per product (sql/03_stay_bags.sql).
+-- share is n_stays as a fraction of all ICU stays.
 create or replace view bag_distribution as
 select
     s.product,

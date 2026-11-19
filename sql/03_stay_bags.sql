@@ -1,4 +1,4 @@
--- Challenge 3: bags per stay
+-- Worksheet 3: bags per stay
 --
 -- stay_bags and bag_distribution live in sql/views.sql.
 -- Creating tables needs a session opened without -readonly.

@@ -1,4 +1,4 @@
--- Challenge 2: turn records into bags
+-- Worksheet 2: turn records into bags
 --
 -- inputevents has one row per record, and records are not bags. A bag is one
 -- unit of product hung and started for a patient:
@@ -9,8 +9,8 @@
 --   4. Two identical records are one record charted twice; count it once.
 --   5. A bag counts once whatever unit its amount is recorded in.
 --
--- The Result comments record an earlier synthetic run. Other runs give
--- different counts, and the order IDs looked up below may not exist.
+-- The Result comments record one synthetic run; other runs give different
+-- numbers and order IDs.
 .read sql/views.sql
 
 
@@ -18,6 +18,7 @@
 -- Records per product. inputevents has no product column, so join it to
 -- product_map on itemid; the join also drops every item that isn't one of the
 -- three blood products.
+-- Result: plasma 11864, platelets 8415, rbc 23478.
 select
     m.product,
     count(*) as n_records
@@ -34,12 +35,12 @@ order by m.product;
 --   Paused           part of a bag; every Paused bag has a later
 --                    FinishedRunning record (rule 1, 2j).
 --   Stopped          a whole bag, started and not finished (rule 2).
---   Rewritten        not a bag: a mistyped copy of another record (rule 3,
---                    2i).
+--   Rewritten        not a bag: a copy of another record with the amount
+--                    mistyped (rule 3, 2h, 2i).
 
 -- 2a. How many records does each status have? (blood products only)
--- Result: 4 statuses. FinishedRunning = 35316, Paused = 3467,
--- Rewritten = 1827, Stopped = 1936.
+-- Result: 4 statuses. FinishedRunning = 35977, Paused = 5040,
+-- Rewritten = 1187, Stopped = 1553.
 select
     e.statusdescription,
     count(*) as n_records
@@ -48,8 +49,8 @@ join product_map as m
     on e.itemid = m.itemid
 group by e.statusdescription;
 
--- 2b. What do records of one status look like? Sample 10.
--- Set the WHERE to one status at a time, so the sample isn't a mix.
+-- 2b. What do records of one status look like? Sample 10, and change the
+-- status to see the others.
 -- Columns to compare: amount vs totalamount (whole bag or part?),
 -- orderid vs linkorderid (first note of its order, or a later one?).
 select
@@ -65,13 +66,13 @@ select
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid
-where e.statusdescription in ('FinishedRunning', 'Stopped', 'Rewritten', 'Paused')
+where e.statusdescription = 'Paused'
 limit 10;
 
 -- 2c. Is every FinishedRunning record a whole bag? Count the ones whose
 -- amount differs from the bag size (amount <> totalamount).
--- Result: 3453 of 35316 differ (about 1 in 10). The other 9 in 10 are
--- whole bags in one record.
+-- Result: 5041 of 35977 differ (about 1 in 7). The other 6 in 7 are whole
+-- bags in one record.
 select count(*) as n_records
 from inputevents as e
 join product_map as m
@@ -81,16 +82,17 @@ where
     and e.amount <> e.totalamount;
 
 -- 2d. Total FinishedRunning records, to put 2c's count in proportion.
--- Result: 35316
+-- Result: 35977
 select count(*) as n_records
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid
 where e.statusdescription = 'FinishedRunning';
 
--- 2e. What are the 1 in 10 FinishedRunning records that aren't whole bags?
--- Result: diff is large (not rounding), and orderid <> linkorderid every
--- time, so each is a later record of an order that started earlier.
+-- 2e. What are the 1 in 7 FinishedRunning records that aren't whole bags?
+-- Result: diff is large (56.5 to 257.2 ml, not rounding), and orderid <>
+-- linkorderid every time, so each is a later record of an order that
+-- started earlier.
 select
     e.orderid,
     e.linkorderid,
@@ -109,8 +111,8 @@ limit 10;
 
 -- 2f. Follow one order from 2e: every record sharing its linkorderid,
 -- in time order.
--- Result: 2 records, Paused then FinishedRunning. Their amounts add up to
--- about totalamount: one bag charted as two pieces.
+-- Result: 2 records, Paused 156.3 then FinishedRunning 152.9. Their amounts
+-- add up to totalamount, 309.2: one bag charted as two pieces.
 select
     e.orderid,
     e.linkorderid,
@@ -123,12 +125,14 @@ select
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid
-where e.linkorderid = 10081336
+where e.linkorderid = 10017004
 order by e.starttime;
 
 -- 2g. What do Stopped records look like? Sample 10.
--- Result: orderid = linkorderid every time (the first record of its order),
--- and amount is less than totalamount: the bag was started and not finished.
+-- Result: orderid = linkorderid every time (the first record of its order).
+-- For the ml items amount is always less than totalamount: the bag was
+-- started and not finished. For 990102, recorded in donor units, the two
+-- are equal.
 select
     e.orderid,
     e.linkorderid,
@@ -145,8 +149,9 @@ limit 10;
 
 -- 2h. What do Rewritten records look like? Sample 10.
 -- Result: orderid <> linkorderid every time (never the first record of its
--- order), and amount is far from totalamount, often many times bigger than
--- the bag.
+-- order). Each Rewritten record has the same starttime as a record of the
+-- same bag, with that record's amount times 10, times 2 or divided by 10,
+-- in about equal numbers.
 select
     e.orderid,
     e.linkorderid,
@@ -163,9 +168,9 @@ limit 10;
 
 -- 2i. Follow one order from 2h: every record sharing its linkorderid,
 -- in time order.
--- Result: 3 records. Paused 117.6, FinishedRunning 207.7, Rewritten 2077.0.
--- The Rewritten record has the same starttime and endtime as the
--- FinishedRunning one, with the amount mistyped (2077.0 for 207.7).
+-- Result: 3 records. Paused 93.3, Rewritten 186.6, FinishedRunning 207.2.
+-- The Rewritten record has the same starttime and endtime as the Paused
+-- one, with the amount doubled (186.6 for 93.3).
 select
     e.orderid,
     e.linkorderid,
@@ -178,17 +183,17 @@ select
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid
-where e.linkorderid = 10000041
+where e.linkorderid = 10000004
 order by e.starttime, e.orderid;
 
 
 -- 2j. To prove that every Paused bag has a later FinishedRunning record, count
 -- the Paused bags (distinct linkorderid) that have no FinishedRunning record.
 -- The result should be 0.
--- Result: 0. The inner Paused query alone returns 3437 bags (3467 Paused
+-- Result: 0. The inner Paused query alone returns 5021 bags (5040 Paused
 -- records, so some bags pause more than once), and none of them is missing
--- a FinishedRunning record. Without the product_map join the counts were
--- 4347 bags / 4387 records: the join drops every item that isn't one of
+-- a FinishedRunning record. Without the product_map join the counts are
+-- 6010 bags / 6033 records: the join drops every item that isn't one of
 -- the three blood products.
 
 select count(*)
@@ -209,8 +214,8 @@ where p.linkorderid not in (
 
 -- 2k. Does a bag with a Stopped record have any other counted records?
 -- Look for counterexamples: Stopped bags with more than one record.
--- Result: no rows. All 1923 Stopped bags have one record after cleaning.
--- Without cleaning, 100 bags have extra rows: Rewritten records or exact
+-- Result: no rows. All 1547 Stopped bags have one record after cleaning.
+-- Without cleaning, 43 bags have extra rows: Rewritten records or exact
 -- duplicates. So the claim holds for counted records, not all raw rows.
 
 select
@@ -246,20 +251,20 @@ having count(*) > 1;
 -- DuckDB has no count(distinct *), so 3b counts a `select distinct *`
 -- derived table.
 --
--- Result: 42546 - 42243 = 303 copies. Joining product_map inside or outside
--- the derived table gives the same 42243: it adds one column with one value
+-- Result: 43757 - 43558 = 199 copies. Joining product_map inside or outside
+-- the derived table gives the same 43558: it adds one column with one value
 -- per itemid, so it can't make two identical rows differ or two different
 -- rows collide.
 
 -- 3a. All blood-product rows.
--- Result: 42546
+-- Result: 43757
 select count(*) as n_rows
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid;
 
 -- 3b. The same rows with exact copies removed.
--- Result: 42243
+-- Result: 43558
 select count(*) as n_rows
 from (
     select distinct *
@@ -269,7 +274,7 @@ from (
 ) as d;
 
 -- Same count with the join outside the derived table.
--- Result: 42243
+-- Result: 43558
 select count(*) as n_rows
 from (
     select distinct *
@@ -286,7 +291,8 @@ join product_map as m
 -- the linkorderid.
 
 -- 4a. Bags with more than one record, busiest first.
--- Result: 5168 bags have more than one record; the busiest have 4.
+-- Result: 6044 bags have more than one record; the busiest have 4, two of
+-- them Rewritten.
 
 select
     e.linkorderid,
@@ -298,7 +304,9 @@ group by e.linkorderid
 having count(*) > 1
 order by count desc;
 
--- 4b. All the records of one multi-record bag.
+-- 4b. All the records of one of the busiest bags.
+-- Result: Paused 98.8, FinishedRunning 198.5, and a Rewritten copy of each
+-- (988.0 and 397.0). The counted records add up to totalamount, 297.3.
 select
     e.orderid,
     e.statusdescription,
@@ -309,7 +317,7 @@ select
 from inputevents as e
 join product_map as m
     on e.itemid = m.itemid
-where e.linkorderid = 10058651
+where e.linkorderid = 10011329
 order by e.starttime;
 
 -- Step 5: units ---------------------------------------------------------------
@@ -341,7 +349,7 @@ where e.amountuom = 'units';
 
 -- 5a-iii. Same answer in one query: one row per (itemid, amountuom) pair
 -- with a record count. Each item appears exactly once, so no item mixes
--- units: 990102 is all 'units' (1398 records); the other four are all 'ml'.
+-- units: 990102 is all 'units' (1130 records); the other four are all 'ml'.
 -- m.product is in the GROUP BY because it is in the SELECT; each itemid has
 -- one product so the groups are unchanged.
 select
@@ -370,9 +378,9 @@ join product_map as m
     on e.itemid = m.itemid
 where e.itemid = 990102;
 
--- 5b-ii. Distinct amounts with a count, before filtering (1398 records).
--- Result: 12 values. 0.4 (9), 0.5 (15), 0.6 (9), 4 (291), 5 (515),
--- 6 (527), 8 (7), 10 (6), 12 (6), 40 (1), 50 (7), 60 (5).
+-- 5b-ii. Distinct amounts with a count, before filtering (1130 records).
+-- Result: 12 values. 0.4 (4), 0.5 (1), 0.6 (7), 4 (231), 5 (395),
+-- 6 (465), 8 (7), 10 (3), 12 (3), 40 (5), 50 (5), 60 (4).
 select
     e.amount,
     count(*)
@@ -394,10 +402,10 @@ from (
 ) as e
 where e.itemid = 990102;
 
--- 5b-iv. Distinct amounts with a count, counted records only (1321 records).
--- Result: 3 values. 4 (287), 5 (511), 6 (523). Every other value in 5b-ii
+-- 5b-iv. Distinct amounts with a count, counted records only (1087 records).
+-- Result: 3 values. 4 (229), 5 (394), 6 (464). Every other value in 5b-ii
 -- came from a Rewritten record: the decimal point slipped one place
--- (0.5, 50) or the value doubled (8, 10, 12).
+-- (0.4-0.6, 40-60) or the value doubled (8, 10, 12).
 select
     e.amount,
     count(*)
@@ -427,7 +435,7 @@ group by e.amount, e.itemid;
 -- Step 7: check the view ---------------------------------------------------------
 
 -- 7a. One row per bag?
--- Result: 36,993 rows, 36,993 distinct bag_ids. Equal, so no bag is split.
+-- Result: 37,358 rows, 37,358 distinct bag_ids. Equal, so no bag is split.
 select
     count(*) as n_bags,
     count(distinct b.bag_id) as n_distinct_bags
@@ -436,11 +444,11 @@ from bags as b;
 -- 7b. Records and amounts per item.
 -- Result:
 --   itemid  unit   n_bags  records  amount
---   990101  ml       6842    1-2    65.3-352.4
---   990102  units    1321    1-1     4-6
---   990103  ml       1924    1-2    57.9-328.8
---   990111  ml      17613    1-2    87.3-395.1
---   990121  ml       9293    1-2    72.8-329.6
+--   990101  ml       3930    1-2    63.8-334.6
+--   990102  units    1087    1-1     4-6
+--   990103  ml       2289    1-2    68.0-332.5
+--   990111  ml      19957    1-2    88.9-401.9
+--   990121  ml      10095    1-2    68.9-334.6
 -- max_records is 2: a bag is paused at most once, and nothing extra (copies,
 -- Rewritten) slipped into counted. 990102 is never paused (always 1 record),
 -- which fits its amount being a count of pooled donors that can't be split
