@@ -18,5 +18,7 @@ jobs:
         run: uv run ruff check .
       - name: Check formatting
         run: uv run ruff format --check .
+      - name: Check SQL formatting
+        run: uv run tools/format_sql.py --check sql/*.sql
       - name: Test
         run: uv run pytest
